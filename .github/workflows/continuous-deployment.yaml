@@ -1,0 +1,92 @@
+name: Continuous deployment
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+    tags: ["[0-9]*.[0-9]*.[0-9]*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.10.7"
+          enable-cache: false
+      - run: uv sync --locked --group dev --group test --extra aws
+      - run: make check hooks
+
+  test-python:
+    name: Test Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.10.7"
+          enable-cache: false
+      - run: uv sync --locked --group test --extra aws --python "$PYTHON_VERSION"
+        env:
+          PYTHON_VERSION: ${{ matrix.python }}
+      - run: make test
+
+  package-verification:
+    name: Verify package distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.10.7"
+          enable-cache: false
+      - run: uv sync --locked --group dev
+      - run: make package-check
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-candidate
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: PyPI release
+    runs-on: ubuntu-latest
+    needs: [check, test-python, package-verification]
+    if: >-
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/') &&
+      vars.PYPI_PUBLISH_ENABLED == 'true'
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

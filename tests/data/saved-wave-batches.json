@@ -1,0 +1,231 @@
+[
+  {
+    "date": "2023-12-31",
+    "current": [
+      {
+        "component_id": "133c509612ac87fbe4c1a99f11fa98a1",
+        "wave_id": "20231231-133c5096",
+        "start_date": "2023-12-31",
+        "peak_qualified_area": 19307073.43300805,
+        "peak_date": "2023-12-31",
+        "continues": false,
+        "overlap_percent": 0.0,
+        "parent_wave_ids": [],
+        "name": "Azza 2023",
+        "component": {
+          "time": "2023-12-31",
+          "label": 1,
+          "geometry": "AQMAAAABAAAABQAAAAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTA",
+          "grace_geometry": null,
+          "full_geometry": "AQMAAAABAAAABQAAAAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTA",
+          "area_qualified": 19307073.43300805,
+          "area_grace": 0.0,
+          "area_gap_filled": 0.0,
+          "qualified_fraction": 1.0
+        }
+      }
+    ],
+    "ended": [],
+    "lineage": []
+  },
+  {
+    "date": "2024-01-01",
+    "current": [
+      {
+        "component_id": "9ea8438bb3d90b0013ccfbea0df4a1fc",
+        "wave_id": "20240101-9ea8438b",
+        "start_date": "2024-01-01",
+        "peak_qualified_area": 9170859.880678821,
+        "peak_date": "2024-01-01",
+        "continues": false,
+        "overlap_percent": 0.0,
+        "parent_wave_ids": [
+          "20231231-133c5096"
+        ],
+        "name": "Chao 2024",
+        "component": {
+          "time": "2024-01-01",
+          "label": 2,
+          "geometry": "AQMAAAABAAAABQAAAAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADRAAAAAAAAA8D8AAAAAAAA0QAAAAAAAAPA/AAAAAAAANMAAAAAAAAA0QAAAAAAAADTA",
+          "grace_geometry": null,
+          "full_geometry": "AQMAAAABAAAABQAAAAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADRAAAAAAAAA8D8AAAAAAAA0QAAAAAAAAPA/AAAAAAAANMAAAAAAAAA0QAAAAAAAADTA",
+          "area_qualified": 9170859.880678821,
+          "area_grace": 0.0,
+          "area_gap_filled": 0.0,
+          "qualified_fraction": 1.0
+        }
+      },
+      {
+        "component_id": "dbf00d97e24bb464bc32f7f2fed656cf",
+        "wave_id": "20240101-dbf00d97",
+        "start_date": "2024-01-01",
+        "peak_qualified_area": 9170859.880678821,
+        "peak_date": "2024-01-01",
+        "continues": false,
+        "overlap_percent": 0.0,
+        "parent_wave_ids": [
+          "20231231-133c5096"
+        ],
+        "name": "Donatella 2024",
+        "component": {
+          "time": "2024-01-01",
+          "label": 1,
+          "geometry": "AQMAAAABAAAABQAAAAAAAAAAAPC/AAAAAAAANMAAAAAAAADwvwAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAADwvwAAAAAAADTA",
+          "grace_geometry": null,
+          "full_geometry": "AQMAAAABAAAABQAAAAAAAAAAAPC/AAAAAAAANMAAAAAAAADwvwAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAADwvwAAAAAAADTA",
+          "area_qualified": 9170859.880678821,
+          "area_grace": 0.0,
+          "area_gap_filled": 0.0,
+          "qualified_fraction": 1.0
+        }
+      }
+    ],
+    "ended": [
+      {
+        "record": {
+          "component_id": "133c509612ac87fbe4c1a99f11fa98a1",
+          "wave_id": "20231231-133c5096",
+          "start_date": "2023-12-31",
+          "peak_qualified_area": 19307073.43300805,
+          "peak_date": "2023-12-31",
+          "continues": false,
+          "overlap_percent": 0.0,
+          "parent_wave_ids": [],
+          "name": "Azza 2023",
+          "component": {
+            "time": "2023-12-31",
+            "label": 1,
+            "geometry": "AQMAAAABAAAABQAAAAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTA",
+            "grace_geometry": null,
+            "full_geometry": "AQMAAAABAAAABQAAAAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTA",
+            "area_qualified": 19307073.43300805,
+            "area_grace": 0.0,
+            "area_gap_filled": 0.0,
+            "qualified_fraction": 1.0
+          }
+        },
+        "end_date": "2023-12-31",
+        "end_reason": "died",
+        "merged_into_wave_id": null
+      }
+    ],
+    "lineage": [
+      {
+        "source_wave_id": "20231231-133c5096",
+        "target_wave_id": "20240101-9ea8438b",
+        "event_date": "2024-01-01",
+        "relationship": "split"
+      },
+      {
+        "source_wave_id": "20231231-133c5096",
+        "target_wave_id": "20240101-dbf00d97",
+        "event_date": "2024-01-01",
+        "relationship": "split"
+      }
+    ]
+  },
+  {
+    "date": "2024-01-02",
+    "current": [
+      {
+        "component_id": "3d22ff70c4185ec4631ed740dfbca57c",
+        "wave_id": "20240101-9ea8438b",
+        "start_date": "2024-01-01",
+        "peak_qualified_area": 19307073.43300805,
+        "peak_date": "2024-01-02",
+        "continues": true,
+        "overlap_percent": 100.0,
+        "parent_wave_ids": [
+          "20240101-dbf00d97"
+        ],
+        "name": "Chao 2024",
+        "component": {
+          "time": "2024-01-02",
+          "label": 1,
+          "geometry": "AQMAAAABAAAABQAAAAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTA",
+          "grace_geometry": null,
+          "full_geometry": "AQMAAAABAAAABQAAAAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTA",
+          "area_qualified": 19307073.43300805,
+          "area_grace": 0.0,
+          "area_gap_filled": 0.0,
+          "qualified_fraction": 1.0
+        }
+      }
+    ],
+    "ended": [
+      {
+        "record": {
+          "component_id": "dbf00d97e24bb464bc32f7f2fed656cf",
+          "wave_id": "20240101-dbf00d97",
+          "start_date": "2024-01-01",
+          "peak_qualified_area": 9170859.880678821,
+          "peak_date": "2024-01-01",
+          "continues": false,
+          "overlap_percent": 0.0,
+          "parent_wave_ids": [
+            "20231231-133c5096"
+          ],
+          "name": "Donatella 2024",
+          "component": {
+            "time": "2024-01-01",
+            "label": 1,
+            "geometry": "AQMAAAABAAAABQAAAAAAAAAAAPC/AAAAAAAANMAAAAAAAADwvwAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAADwvwAAAAAAADTA",
+            "grace_geometry": null,
+            "full_geometry": "AQMAAAABAAAABQAAAAAAAAAAAPC/AAAAAAAANMAAAAAAAADwvwAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAADwvwAAAAAAADTA",
+            "area_qualified": 9170859.880678821,
+            "area_grace": 0.0,
+            "area_gap_filled": 0.0,
+            "qualified_fraction": 1.0
+          }
+        },
+        "end_date": "2024-01-01",
+        "end_reason": "merged",
+        "merged_into_wave_id": "20240101-9ea8438b"
+      }
+    ],
+    "lineage": [
+      {
+        "source_wave_id": "20240101-dbf00d97",
+        "target_wave_id": "20240101-9ea8438b",
+        "event_date": "2024-01-02",
+        "relationship": "merge"
+      }
+    ]
+  },
+  {
+    "date": "2024-01-03",
+    "current": [],
+    "ended": [
+      {
+        "record": {
+          "component_id": "3d22ff70c4185ec4631ed740dfbca57c",
+          "wave_id": "20240101-9ea8438b",
+          "start_date": "2024-01-01",
+          "peak_qualified_area": 19307073.43300805,
+          "peak_date": "2024-01-02",
+          "continues": true,
+          "overlap_percent": 100.0,
+          "parent_wave_ids": [
+            "20240101-dbf00d97"
+          ],
+          "name": "Chao 2024",
+          "component": {
+            "time": "2024-01-02",
+            "label": 1,
+            "geometry": "AQMAAAABAAAABQAAAAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTA",
+            "grace_geometry": null,
+            "full_geometry": "AQMAAAABAAAABQAAAAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADRAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTAAAAAAAAANMAAAAAAAAA0QAAAAAAAADTA",
+            "area_qualified": 19307073.43300805,
+            "area_grace": 0.0,
+            "area_gap_filled": 0.0,
+            "qualified_fraction": 1.0
+          }
+        },
+        "end_date": "2024-01-02",
+        "end_reason": "died",
+        "merged_into_wave_id": null
+      }
+    ],
+    "lineage": []
+  }
+]

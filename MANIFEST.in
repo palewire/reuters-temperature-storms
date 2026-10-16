@@ -1,0 +1,7 @@
+include LICENSE
+include Makefile uv.lock .python-version .pre-commit-config.yaml
+recursive-include src *.py *.csv py.typed
+recursive-include tests *.py
+recursive-include tests/data *.json
+include scripts/check_release_artifacts.py
+exclude data/*.parquet
