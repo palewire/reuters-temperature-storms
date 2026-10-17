@@ -1,4 +1,4 @@
-How to calculate the supersized heat waves tracked by the Reuters Climate Monitor
+How to calculate the supersized heat waves tracked by the [Reuters Climate Monitor](https://www.reuters.com/graphics/CLIMATE-AUTOMATED/MONITOR/akpeykqqapr/heat-storms/).
 
 The code in this repository generated the analysis published in an October 20, 2026 Reuters story headlined ["Giant ‘heat storms’ are scorching the Earth. This is the story of the biggest one on record."](https://www.reuters.com/investigates/special-report/climate-heatstorms-science/). The same logic is used by the [Reuters Climate Monitor](https://www.reuters.com/graphics/CLIMATE-AUTOMATED/MONITOR/akpeykqqapr/heat-storms/) to track heat storms in real time.
 
