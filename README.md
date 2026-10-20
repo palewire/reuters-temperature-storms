@@ -4,7 +4,7 @@ The code in this repository generated the analysis published in an October 20, 2
 
 The inspiration and methodology are explained in ["How (and why) we developed ‘The Age of Heat Storms’"](https://www.reuters.com/investigates/special-report/climate-heatstorms-methodology/).
 
-[![A screenshot of the methodology story explaining how we did it](./.github/climate-story-method.png)](https://www.reuters.com/investigates/special-report/climate-heatstorms-methodology/)
+[![A screenshot of the methodology story explaining how we did it]([https://raw.githubusercontent.com/palewire/reuters-temperature-storms/refs/heads/main/.github/climate-method-story.png)](https://www.reuters.com/investigates/special-report/climate-heatstorms-methodology/)
 
 For the Reuters analysis, temperature readings were drawn from the [ERA5 reanalysis dataset](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=overview) published by the [European Centre for Medium-Range Weather Forecasts](https://www.ecmwf.int/)’ [Copernicus](https://climate.copernicus.eu/) program. That data is not included here.
 
