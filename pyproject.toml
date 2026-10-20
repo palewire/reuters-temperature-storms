@@ -20,7 +20,7 @@ dependencies = [
 ]
 authors = [{ name = "Reuters Graphics" }]
 description = "How to calculate the supersized heat waves tracked by the Reuters Climate Monitor"
-readme = { text = "How to calculate the supersized heat waves tracked by the Reuters Climate Monitor", content-type = "text/plain" }
+readme = "README.md"
 keywords = ["Reuters", "climate", "temperature", "storms"]
 license = "MIT"
 license-files = ["LICENSE"]
