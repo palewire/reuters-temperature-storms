@@ -152,9 +152,14 @@ def test_seed_ids_use_geometry_keys_and_ignore_discovery_order() -> None:
 
     assert forward.current == reverse.current
     assert all(
-        len(record.component_id) == 32 and len(record.wave_id) == 17
+        len(record.component_id) == 32 and len(record.wave_id) == 41
         for record in forward.current
     )
+    # The fixed vectors hash date plus the known first cells 519119 and 519139.
+    assert {record.wave_id for record in forward.current} == {
+        "20240101-32c596b38c0f962c549c745f65580edd",
+        "20240101-0f6cc26746ca7b71935a7cf774bfc3d8",
+    }
     assert all(record.parent_wave_ids == () for record in forward.current)
 
 
@@ -1066,14 +1071,14 @@ def test_merge_tie_uses_previous_daily_footprint_id() -> None:
     previous = list(_seed(_DAY_1, left, right).current)
     ordered = sorted(previous, key=lambda record: record.component_id)
     previous = [
-        replace(ordered[0], wave_id="20240101-ffffffff"),
-        replace(ordered[1], wave_id="20240101-00000000"),
+        replace(ordered[0], wave_id="20240101-000000000000000000000000ffffffff"),
+        replace(ordered[1], wave_id="20240101-00000000000000000000000000000000"),
     ]
     merged = _component(_DAY_2, 1, box(0, 0, 8, 1))
     update = track_reuters_waves(
         date=_DAY_2, series=_SERIES, components=(merged,), previous=previous
     )
-    assert update.current[0].wave_id == "20240101-ffffffff"
+    assert update.current[0].wave_id == "20240101-000000000000000000000000ffffffff"
 
 
 @pytest.mark.unit
@@ -1156,7 +1161,13 @@ def test_exact_sixty_percent_ratio_continues_despite_display_rounding(monkeypatc
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("key", ["20250101-12345678", "20241399-12345678"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "20250101-00000000000000000000000012345678",
+        "20241399-00000000000000000000000012345678",
+    ],
+)
 def test_previous_key_requires_actual_birth_date(key):
     """Reject impossible prior permanent keys before overlap or naming decisions.
 

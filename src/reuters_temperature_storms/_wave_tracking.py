@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from numbers import Real
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import geopandas as gpd
 import numpy as np
@@ -19,7 +19,7 @@ from .components import (
     DailyWaveComponentGeometry,
     _relative_difference,
 )
-from .identity import birth_wave_identity, component_identity
+from .identity import WAVE_ID_PATTERN, birth_wave_identity, component_identity
 from .series import WaveSeries
 
 if TYPE_CHECKING:
@@ -512,8 +512,8 @@ def _validate_component_membership(
     """Validate identity for a supplied footprint.
 
     Steps:
-        1. Check the footprint component hash and membership fields.
-        2. Require the hash to agree with the stored complete shape.
+        1. Check the complete daily component ID and membership fields.
+        2. Require the ID to agree with the date and first occupied grid cell.
 
     Args:
         component: Supplied daily footprint.
@@ -531,7 +531,7 @@ def _validate_component_membership(
     if len(component.component_id) != 32 or any(
         character not in "0123456789abcdef" for character in component.component_id
     ):
-        msg = "component_id must be a 32-character lowercase MD5 hash"
+        msg = "component_id must be a 32-character lowercase date-and-cell digest"
         raise WaveTrackingError(msg)
     expected = component_identity(
         temperature=series.temperature,
@@ -642,7 +642,7 @@ def _validate_component_geometry(membership: ComponentMembership) -> None:
         msg = (
             "component role areas must match full_geometry in EPSG:6933 km2: "
             f"component {membership.component_id} label {component.label} on "
-            f"{np.datetime64(component.time, 'D')} states "
+            f"{component.time.astype('datetime64[D]')} states "
             f"{stated_full} km2 (qualified {component.area_qualified}, grace "
             f"{component.area_grace}, gap {component.area_gap_filled}) against "
             f"a measured {expected_full} km2, "
@@ -1311,7 +1311,7 @@ def _as_day(value: np.datetime64, label: str) -> np.datetime64:
     if not isinstance(value, np.datetime64) or np.isnat(value):
         msg = f"{label} must be a valid numpy datetime64"
         raise WaveTrackingError(msg)
-    return value.astype("datetime64[D]")
+    return cast("np.datetime64", value.astype("datetime64[D]"))
 
 
 def _is_wave_id(value: str) -> bool:
@@ -1319,24 +1319,18 @@ def _is_wave_id(value: str) -> bool:
 
     Steps:
         1. Check the compact birth-date prefix and separator.
-        2. Require eight lowercase hexadecimal hash characters.
+        2. Require the complete 32-character lowercase date-and-cell digest.
 
     Args:
         value: Candidate wave ID.
 
     Returns:
-        Whether the ID has birth-date and hash-prefix form.
+        Whether the ID has birth-date and complete daily-ID form.
 
     Examples:
-        _is_wave_id("19600105-94691d76")
+        _is_wave_id("19600105-94691d760123456789abcdef01234567")
     """
-    return (
-        isinstance(value, str)
-        and len(value) == 17
-        and value[:8].isdigit()
-        and value[8] == "-"
-        and all(character in "0123456789abcdef" for character in value[9:])
-    )
+    return isinstance(value, str) and WAVE_ID_PATTERN.fullmatch(value) is not None
 
 
 def _validate_output(

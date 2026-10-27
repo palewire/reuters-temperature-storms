@@ -62,13 +62,19 @@ class ComponentMembership:
     Args:
         component_id: Identifier of the supplied daily component.
         geometry: Daily geometry and role-area record for the component.
+        input_id: Original file-row identifier, when the component came from a
+            prepared input file. It does not participate in tracking decisions.
 
     Examples:
         component = ComponentMembership("daily-component", geometry)
     """
 
+    #: Daily identity derived from the calendar date and first occupied cell.
     component_id: str
+    #: Finished role shapes and physical measurements for this component.
     geometry: DailyWaveComponentGeometry
+    #: Original prepared-file label retained for associated cell joins.
+    input_id: str | None = None
 
 
 def _relative_difference(stated: float, measured: float) -> float:

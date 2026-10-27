@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from hashlib import md5
 from typing import TYPE_CHECKING
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 from pyproj import Transformer
 from shapely.geometry import box
 from shapely.ops import transform
 
 from reuters_temperature_storms import WaveCells
+from reuters_temperature_storms.identity import component_identity
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -87,9 +88,14 @@ def _footprint_frame(day: date, shapes: tuple[Polygon, ...]) -> gpd.GeoDataFrame
         float(transform(_AREA_TRANSFORMER.transform, shape).area / 1_000_000)
         for shape in shapes
     ]
-    # Daily footprint IDs use the date and complete WKT with its original order.
+    # Input constructors use the same physical-footprint identity as producers.
     ids = [
-        md5(f"{day} {shape.wkt}".encode(), usedforsecurity=False).hexdigest()
+        component_identity(
+            temperature="tasmax",
+            direction="warm",
+            date=np.datetime64(day, "D"),
+            geometry=shape,
+        )
         for shape in shapes
     ]
     return gpd.GeoDataFrame(

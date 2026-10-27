@@ -3,15 +3,15 @@
     "date": "2023-12-31",
     "current": [
       {
-        "component_id": "133c509612ac87fbe4c1a99f11fa98a1",
-        "wave_id": "20231231-133c5096",
+        "component_id": "6e71a1aafec66d7d69c5f856254ded45",
+        "wave_id": "20231231-6e71a1aafec66d7d69c5f856254ded45",
         "start_date": "2023-12-31",
         "peak_qualified_area": 19307073.43300805,
         "peak_date": "2023-12-31",
         "continues": false,
         "overlap_percent": 0.0,
         "parent_wave_ids": [],
-        "name": "Azza 2023",
+        "name": "Uriel 2023",
         "component": {
           "time": "2023-12-31",
           "label": 1,
@@ -32,17 +32,17 @@
     "date": "2024-01-01",
     "current": [
       {
-        "component_id": "9ea8438bb3d90b0013ccfbea0df4a1fc",
-        "wave_id": "20240101-9ea8438b",
+        "component_id": "c56c6bd22dc7a9a9a6d0d516e6c6c7c2",
+        "wave_id": "20240101-c56c6bd22dc7a9a9a6d0d516e6c6c7c2",
         "start_date": "2024-01-01",
         "peak_qualified_area": 9170859.880678821,
         "peak_date": "2024-01-01",
         "continues": false,
         "overlap_percent": 0.0,
         "parent_wave_ids": [
-          "20231231-133c5096"
+          "20231231-6e71a1aafec66d7d69c5f856254ded45"
         ],
-        "name": "Chao 2024",
+        "name": "Yvonne 2024",
         "component": {
           "time": "2024-01-01",
           "label": 2,
@@ -56,17 +56,17 @@
         }
       },
       {
-        "component_id": "dbf00d97e24bb464bc32f7f2fed656cf",
-        "wave_id": "20240101-dbf00d97",
+        "component_id": "f743159eeb5053a2ac8db65ecd9ac3fe",
+        "wave_id": "20240101-f743159eeb5053a2ac8db65ecd9ac3fe",
         "start_date": "2024-01-01",
         "peak_qualified_area": 9170859.880678821,
         "peak_date": "2024-01-01",
         "continues": false,
         "overlap_percent": 0.0,
         "parent_wave_ids": [
-          "20231231-133c5096"
+          "20231231-6e71a1aafec66d7d69c5f856254ded45"
         ],
-        "name": "Donatella 2024",
+        "name": "Helmut 2024",
         "component": {
           "time": "2024-01-01",
           "label": 1,
@@ -83,15 +83,15 @@
     "ended": [
       {
         "record": {
-          "component_id": "133c509612ac87fbe4c1a99f11fa98a1",
-          "wave_id": "20231231-133c5096",
+          "component_id": "6e71a1aafec66d7d69c5f856254ded45",
+          "wave_id": "20231231-6e71a1aafec66d7d69c5f856254ded45",
           "start_date": "2023-12-31",
           "peak_qualified_area": 19307073.43300805,
           "peak_date": "2023-12-31",
           "continues": false,
           "overlap_percent": 0.0,
           "parent_wave_ids": [],
-          "name": "Azza 2023",
+          "name": "Uriel 2023",
           "component": {
             "time": "2023-12-31",
             "label": 1,
@@ -111,14 +111,14 @@
     ],
     "lineage": [
       {
-        "source_wave_id": "20231231-133c5096",
-        "target_wave_id": "20240101-9ea8438b",
+        "source_wave_id": "20231231-6e71a1aafec66d7d69c5f856254ded45",
+        "target_wave_id": "20240101-c56c6bd22dc7a9a9a6d0d516e6c6c7c2",
         "event_date": "2024-01-01",
         "relationship": "split"
       },
       {
-        "source_wave_id": "20231231-133c5096",
-        "target_wave_id": "20240101-dbf00d97",
+        "source_wave_id": "20231231-6e71a1aafec66d7d69c5f856254ded45",
+        "target_wave_id": "20240101-f743159eeb5053a2ac8db65ecd9ac3fe",
         "event_date": "2024-01-01",
         "relationship": "split"
       }
@@ -128,17 +128,17 @@
     "date": "2024-01-02",
     "current": [
       {
-        "component_id": "3d22ff70c4185ec4631ed740dfbca57c",
-        "wave_id": "20240101-9ea8438b",
+        "component_id": "4577dcdf561359e44ca9f6e214a62b64",
+        "wave_id": "20240101-c56c6bd22dc7a9a9a6d0d516e6c6c7c2",
         "start_date": "2024-01-01",
         "peak_qualified_area": 19307073.43300805,
         "peak_date": "2024-01-02",
         "continues": true,
         "overlap_percent": 100.0,
         "parent_wave_ids": [
-          "20240101-dbf00d97"
+          "20240101-f743159eeb5053a2ac8db65ecd9ac3fe"
         ],
-        "name": "Chao 2024",
+        "name": "Yvonne 2024",
         "component": {
           "time": "2024-01-02",
           "label": 1,
@@ -155,17 +155,17 @@
     "ended": [
       {
         "record": {
-          "component_id": "dbf00d97e24bb464bc32f7f2fed656cf",
-          "wave_id": "20240101-dbf00d97",
+          "component_id": "f743159eeb5053a2ac8db65ecd9ac3fe",
+          "wave_id": "20240101-f743159eeb5053a2ac8db65ecd9ac3fe",
           "start_date": "2024-01-01",
           "peak_qualified_area": 9170859.880678821,
           "peak_date": "2024-01-01",
           "continues": false,
           "overlap_percent": 0.0,
           "parent_wave_ids": [
-            "20231231-133c5096"
+            "20231231-6e71a1aafec66d7d69c5f856254ded45"
           ],
-          "name": "Donatella 2024",
+          "name": "Helmut 2024",
           "component": {
             "time": "2024-01-01",
             "label": 1,
@@ -180,13 +180,13 @@
         },
         "end_date": "2024-01-01",
         "end_reason": "merged",
-        "merged_into_wave_id": "20240101-9ea8438b"
+        "merged_into_wave_id": "20240101-c56c6bd22dc7a9a9a6d0d516e6c6c7c2"
       }
     ],
     "lineage": [
       {
-        "source_wave_id": "20240101-dbf00d97",
-        "target_wave_id": "20240101-9ea8438b",
+        "source_wave_id": "20240101-f743159eeb5053a2ac8db65ecd9ac3fe",
+        "target_wave_id": "20240101-c56c6bd22dc7a9a9a6d0d516e6c6c7c2",
         "event_date": "2024-01-02",
         "relationship": "merge"
       }
@@ -198,17 +198,17 @@
     "ended": [
       {
         "record": {
-          "component_id": "3d22ff70c4185ec4631ed740dfbca57c",
-          "wave_id": "20240101-9ea8438b",
+          "component_id": "4577dcdf561359e44ca9f6e214a62b64",
+          "wave_id": "20240101-c56c6bd22dc7a9a9a6d0d516e6c6c7c2",
           "start_date": "2024-01-01",
           "peak_qualified_area": 19307073.43300805,
           "peak_date": "2024-01-02",
           "continues": true,
           "overlap_percent": 100.0,
           "parent_wave_ids": [
-            "20240101-dbf00d97"
+            "20240101-f743159eeb5053a2ac8db65ecd9ac3fe"
           ],
-          "name": "Chao 2024",
+          "name": "Yvonne 2024",
           "component": {
             "time": "2024-01-02",
             "label": 1,
