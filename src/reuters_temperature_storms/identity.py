@@ -64,6 +64,8 @@ class FootprintIdentity:
         Examples:
             assert FootprintIdentity(day, box(-0.125, -0.125, 0.125, 0.125)).cell_id == 519119
         """
+        # A missing or broken shape cannot tell us which cells belong to the
+        # footprint. Check the shape before looking for an occupied cell.
         geometry = self.geometry
         if not isinstance(geometry, Geometry) or geometry.is_empty:
             raise IdentityError("geometry must be a nonempty Shapely footprint")
@@ -72,32 +74,59 @@ class FootprintIdentity:
             or not geometry.is_valid
         ):
             raise IdentityError("geometry must be a valid polygonal footprint")
+
+        # This grid uses longitude and latitude only. Reject height values and
+        # missing or infinite numbers, which would make the lookup unreliable.
         if (
             shapely.get_coordinate_dimension(geometry) != 2
             or not np.isfinite(shapely.get_coordinates(geometry)).all()
         ):
             raise IdentityError("geometry must use finite two-dimensional coordinates")
+
+        # Read the shape's outer limits to narrow the search. Those limits must
+        # stay inside the world's longitude and latitude ranges.
         min_x, min_y, max_x, max_y = geometry.bounds
         if min_x < -180 or max_x > 180 or min_y < -90 or max_y > 90:
             raise IdentityError("footprint must stay inside longitude/latitude bounds")
+
+        # Grid centres are a quarter degree apart, starting at latitude -90 and
+        # longitude -179.75. Multiplying each offset by four gives its row or
+        # column number. Round inward to skip centres outside the shape's outer
+        # limits, and keep the resulting numbers inside the stored grid.
         first_row = max(0, ceil((min_y + 90) * 4))
         last_row = min(_LATITUDE_COUNT - 1, floor((max_y + 90) * 4))
         first_column = max(0, ceil((min_x + 179.75) * 4))
         last_column = min(_LONGITUDE_COUNT - 1, floor((max_x + 179.75) * 4))
+
+        # The cell centred on +180 is drawn in two halves, one at each edge of
+        # the map. Check both edges at the same latitudes: every occupied half
+        # must have its partner so they still represent one complete cell.
         if min_x == -180 or max_x == 180:
             latitudes = np.arange(first_row, last_row + 1) / 4 - 90
             western = shapely.intersects_xy(geometry, -180, latitudes)
             eastern = shapely.intersects_xy(geometry, 180, latitudes)
             if not np.array_equal(western, eastern):
                 raise IdentityError("footprint must retain both dateline cell halves")
+
+        # Build the possible longitudes once. Every latitude row uses the same
+        # columns, so the search can reuse them as it moves north.
         columns = np.arange(first_column, last_column + 1)
         longitudes = columns / 4 - 179.75
+
+        # Search from south to north, then west to east. Testing cell centres
+        # makes the first choice independent of the polygon's coordinate order.
+        # Separate finished footprints cannot own the same occupied grid cell.
         for row in range(first_row, last_row + 1):
             occupied = np.flatnonzero(
                 shapely.intersects_xy(geometry, longitudes, row / 4 - 90)
             )
             if occupied.size:
+                # Give each row 1,440 addresses, then add the column number.
+                # This turns the chosen row and column into one integer ID.
                 return row * _LONGITUDE_COUNT + int(columns[occupied[0]])
+
+        # A finished footprint must contain at least one grid cell centre.
+        # Reaching the end means this shape cannot provide a usable address.
         raise IdentityError("footprint must contain a quarter-degree grid cell centre")
 
     @property
