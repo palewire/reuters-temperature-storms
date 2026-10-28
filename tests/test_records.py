@@ -344,7 +344,9 @@ def _record(
         wave_id=wave_id,
         start_date=np.datetime64(start or day, "D"),
         birth_cell_id=0,
-        birth_order_digest=f"{int(wave_id.split('-')[-1], 16):032x}",
+        birth_order_digest=component_id
+        if start is None or start == day
+        else f"{int(wave_id.split('-')[-1], 16):032x}",
         peak_qualified_area=2.0,
         peak_date=np.datetime64(day, "D"),
         continues=start is not None,

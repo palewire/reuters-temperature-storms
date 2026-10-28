@@ -1031,13 +1031,14 @@ def _record_payload(record: TrackedWaveComponent) -> dict[str, object]:
 
 
 def _record_from_payload(value: object, series: WaveSeries) -> TrackedWaveComponent:
-    """Decode one complete active record from a checkpoint JSON object.
+    """Decode one complete record from a checkpoint or saved daily batch.
 
     Steps:
         1. Require a record object with component fields and a text list of parent IDs.
         2. Restore component dates, labels, exact shapes and area measurements.
         3. Require the saved name field, accepting either nonblank text or no name.
-        4. Restore the wave identity, start, peak and continuation fields without changing stored order.
+        4. Check that a first-day record retains its daily ordering as birth ordering.
+        5. Restore the wave identity, start, peak and continuation fields without changing stored order.
 
     Args:
         value: Candidate active-record object.
@@ -1090,14 +1091,25 @@ def _record_from_payload(value: object, series: WaveSeries) -> TrackedWaveCompon
     if name is not None and (not isinstance(name, str) or not name.strip()):
         msg = "tracker checkpoint name must be nonblank text or None"
         raise WaveTrackerError(msg)
+    start_date = np.datetime64(_string_field(value, "start_date"), "D")
+    birth_order_digest = _order_digest_field(value, "birth_order_digest")
+    # The first day's two ordering fields describe the same footprint. Later
+    # days can differ because the wave moved, so keep their saved birth order.
+    if (
+        start_date == component.geometry.time
+        and birth_order_digest != component.order_digest
+    ):
+        raise WaveTrackerError(
+            "saved birth_order_digest must match the birth component order_digest"
+        )
     return TrackedWaveComponent(
         series=series,
         component=component,
         component_id=component.component_id,
         wave_id=_string_field(value, "wave_id"),
-        start_date=np.datetime64(_string_field(value, "start_date"), "D"),
+        start_date=start_date,
         birth_cell_id=_integer_field(value, "birth_cell_id"),
-        birth_order_digest=_order_digest_field(value, "birth_order_digest"),
+        birth_order_digest=birth_order_digest,
         peak_qualified_area=_float_field(value, "peak_qualified_area"),
         peak_date=np.datetime64(_string_field(value, "peak_date"), "D"),
         continues=_boolean_field(value, "continues"),

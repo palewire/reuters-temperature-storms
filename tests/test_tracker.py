@@ -1297,6 +1297,48 @@ def test_checkpoint_rejects_birth_order_that_disagrees_with_birth_component() ->
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("record_kind", ["current", "ended"])
+def test_saved_batch_rejects_birth_order_that_disagrees_with_birth_component(
+    record_kind: str,
+) -> None:
+    """Reject changed birth ordering in saved active records and final endings.
+
+    Args:
+        record_kind: Saved active record or final ending record to corrupt.
+
+    Returns:
+        None. A full but incorrect birth digest is rejected during decoding.
+
+    Examples:
+        pytest tests/test_tracker.py -k saved_batch_rejects_birth_order
+
+    Steps:
+        1. Track a valid newborn wave and optionally end it the following day.
+        2. Replace its birth ordering with a different complete digest.
+        3. Require saved-batch decoding to reject that inconsistent record.
+    """
+    tracker = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="synthetic"
+    )
+    output = tracker.advance(
+        _batch(_START, (_component(_START, 1, order_digest="1" * 32),))
+    )
+    if record_kind == "ended":
+        output = tracker.advance(_batch(_START + timedelta(days=1), ()))
+    document = json.loads(output.to_bytes())
+    record = (
+        document["current"][0]
+        if record_kind == "current"
+        else document["ended"][0]["record"]
+    )
+    record["birth_order_digest"] = "2" * 32
+    with pytest.raises(WaveTrackerError, match="cannot be restored") as error:
+        WaveTrackingBatch.from_bytes(json.dumps(document).encode(), output.checkpoint)
+    assert isinstance(error.value.__cause__, WaveTrackerError)
+    assert "birth component" in str(error.value.__cause__)
+
+
+@pytest.mark.unit
 def test_checkpoint_rejects_duplicate_full_birth_ordering_keys() -> None:
     """Reject two active waves claiming the same birth date and full digest.
 

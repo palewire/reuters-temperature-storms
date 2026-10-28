@@ -123,8 +123,10 @@ def run_waves(
         ValueError: If input footprints or scientific records are invalid.
 
     Examples:
-        result = run_waves(WaveFootprintSource("./footprints"), date(1960, 1, 1),
-                            date(1960, 1, 6), "./wave-results")
+        source = WaveFootprintSource(
+            "./footprints", cell_source=WaveCellSource("./cells")
+        )
+        result = run_waves(source, date(1960, 1, 1), date(1960, 1, 6), "./wave-results")
     """
     for value in (start_date, end_date):
         if not isinstance(value, date) or isinstance(value, datetime):
