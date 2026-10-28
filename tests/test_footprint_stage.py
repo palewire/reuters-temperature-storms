@@ -105,8 +105,8 @@ def test_real_processes_match_serial_footprints_for_every_series(tmp_path, serie
         2. Check that files retain identical IDs, WKB and scalar measurements.
     """
     source = _write_inputs(tmp_path / "cells", series=series)
-    serial = WaveFootprintSource(str(tmp_path / "serial"))
-    parallel = WaveFootprintSource(str(tmp_path / "parallel"))
+    serial = WaveFootprintSource(str(tmp_path / "serial"), cell_source=source)
+    parallel = WaveFootprintSource(str(tmp_path / "parallel"), cell_source=source)
     end = DAY + timedelta(days=2)
     serial_results = FootprintRun(source, serial, DAY, end, series, max_workers=1).run()
     progress = []
@@ -157,7 +157,7 @@ def test_failed_day_does_not_prevent_other_days_and_retry_skips_valid_files(tmp_
     source = _write_inputs(tmp_path / "cells")
     missing = DAY + timedelta(days=1)
     source._filesystem.rm(source.path_for(missing, SERIES))
-    output = WaveFootprintSource(str(tmp_path / "output"))
+    output = WaveFootprintSource(str(tmp_path / "output"), cell_source=source)
     stage = FootprintRun(
         source, output, DAY, DAY + timedelta(days=2), SERIES, max_workers=2
     )
@@ -192,7 +192,7 @@ def test_existing_valid_output_skips_without_reopening_source(tmp_path):
         2. Check that a valid existing date is checked and skipped without a cell read.
     """
     source = _write_inputs(tmp_path / "cells", count=1)
-    output = WaveFootprintSource(str(tmp_path / "output"))
+    output = WaveFootprintSource(str(tmp_path / "output"), cell_source=source)
     stage = FootprintRun(source, output, DAY, DAY, SERIES, max_workers=1)
     (first,) = stage.run()
     source._filesystem.rm(source.path_for(DAY, SERIES))
@@ -222,7 +222,7 @@ def test_invalid_existing_file_is_refused_until_forced(tmp_path, mutation):
         2. Check that invalid files raise a dated error and explicit force replaces them.
     """
     source = _write_inputs(tmp_path / "cells", count=1)
-    output = WaveFootprintSource(str(tmp_path / "output"))
+    output = WaveFootprintSource(str(tmp_path / "output"), cell_source=source)
     stage = FootprintRun(source, output, DAY, DAY, SERIES, max_workers=1)
     stage.run()
     path = output.path_for(DAY, SERIES)
@@ -266,7 +266,7 @@ def test_existing_file_preserves_valid_supplied_input_labels(tmp_path: Path) -> 
         3. Check that reuse preserves the accepted output file unchanged.
     """
     source = _write_inputs(tmp_path / "cells", count=1)
-    output = WaveFootprintSource(str(tmp_path / "output"))
+    output = WaveFootprintSource(str(tmp_path / "output"), cell_source=source)
     stage = FootprintRun(source, output, DAY, DAY, SERIES, max_workers=1)
     stage.run()
     path = output.path_for(DAY, SERIES)
@@ -278,7 +278,7 @@ def test_existing_file_preserves_valid_supplied_input_labels(tmp_path: Path) -> 
     (result,) = stage.run()
     assert result.skipped
     assert output._filesystem.cat(path) == saved
-    assert [component.input_id for component in output.read(DAY, SERIES)] == ["a" * 32]
+    assert WaveFootprints.read_parquet(path).frame["storm_id"].tolist() == ["a" * 32]
 
 
 def test_declared_missing_empty_day_creates_explicit_empty_parquet(tmp_path):
@@ -298,7 +298,7 @@ def test_declared_missing_empty_day_creates_explicit_empty_parquet(tmp_path):
         2. Check that the output includes a readable typed empty daily GeoParquet.
     """
     source = WaveCellSource(str(tmp_path / "cells"), known_empty_dates=(DAY,))
-    output = WaveFootprintSource(str(tmp_path / "output"))
+    output = WaveFootprintSource(str(tmp_path / "output"), cell_source=source)
     (result,) = FootprintRun(source, output, DAY, DAY, SERIES, max_workers=1).run()
     assert result.rows == 0
     assert result.bytes > 0
@@ -341,7 +341,7 @@ def test_stage_rejects_invalid_configuration_before_writing(tmp_path, mutation):
         2. Check that no output is written for invalid stage configuration.
     """
     source = _write_inputs(tmp_path / "cells", count=1)
-    output = WaveFootprintSource(str(tmp_path / "output"))
+    output = WaveFootprintSource(str(tmp_path / "output"), cell_source=source)
     start, end, series, workers, force = DAY, DAY, SERIES, 1, False
     if mutation == "source_equals_destination":
         output = WaveFootprintSource(source.location)
@@ -391,7 +391,7 @@ def test_check_reports_missing_dates_and_validates_existing_files(tmp_path):
         2. Check that missing dates are reported, complete inputs pass, invalid files fail.
     """
     source = _write_inputs(tmp_path / "cells")
-    output = WaveFootprintSource(str(tmp_path / "output"))
+    output = WaveFootprintSource(str(tmp_path / "output"), cell_source=source)
     end = DAY + timedelta(days=2)
     stage = FootprintRun(source, output, DAY, end, SERIES, max_workers=1)
     assert stage.check() == (DAY, DAY + timedelta(days=1), end)
@@ -423,7 +423,7 @@ def test_fsspec_file_urls_work_as_separate_process_output(tmp_path):
     """
     original = _write_inputs(tmp_path / "cells", count=2)
     source = WaveCellSource((tmp_path / "cells").as_uri())
-    output = WaveFootprintSource((tmp_path / "output").as_uri())
+    output = WaveFootprintSource((tmp_path / "output").as_uri(), cell_source=source)
     stage = FootprintRun(
         source, output, DAY, DAY + timedelta(days=1), SERIES, max_workers=2
     )
@@ -488,6 +488,8 @@ def test_build_check_and_track_cli_pipeline(tmp_path):
             "run",
             "--wave-footprints",
             str(footprint_root),
+            "--wave-cells",
+            source.location,
             "--output",
             str(result_root),
             "--start-date",
@@ -585,7 +587,7 @@ def test_unexpected_worker_exit_reports_retry_and_preserves_completed_files(
         2. Check that existing outputs survive and the error explains safe retry.
     """
     source = _write_inputs(tmp_path / "cells")
-    output = WaveFootprintSource(str(tmp_path / "output"))
+    output = WaveFootprintSource(str(tmp_path / "output"), cell_source=source)
     FootprintRun(source, output, DAY, DAY, SERIES, max_workers=1).run()
     prior = output._filesystem.cat(output.path_for(DAY, SERIES))
 

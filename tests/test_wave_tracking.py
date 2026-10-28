@@ -65,6 +65,7 @@ def _component(
     *,
     qualified=None,
     grace=None,
+    order_digest: str | None = None,
 ) -> ComponentMembership:
     """Build a synthetic daily component with measured role areas and a geometry key.
 
@@ -74,6 +75,8 @@ def _component(
         full: Complete polygon including all component roles.
         qualified: Optional qualified polygon; defaults to the full polygon.
         grace: Optional grace-period polygon.
+        order_digest: Explicit synthetic ordering token. The component ID is
+            the default token because these test polygons are not native cells.
 
     Returns:
         Synthetic component with geometry identity and measured role areas.
@@ -106,7 +109,11 @@ def _component(
         date=day,
         geometry=full,
     )
-    return ComponentMembership(component_id, geometry)
+    return ComponentMembership(
+        component_id,
+        geometry,
+        component_id if order_digest is None else order_digest,
+    )
 
 
 def _seed(day: np.datetime64, *components: ComponentMembership):
@@ -427,7 +434,9 @@ def test_duplicate_component_id_fails_closed() -> None:
         full_geometry=box(6, 0, 10, 1),
         geometry=box(6, 0, 10, 1),
     )
-    duplicate = ComponentMembership(component.component_id, duplicate_geometry)
+    duplicate = ComponentMembership(
+        component.component_id, duplicate_geometry, component.order_digest
+    )
 
     with pytest.raises(WaveTrackingError, match="component IDs"):
         _seed(_DAY_1, component, duplicate)
@@ -1107,8 +1116,8 @@ def test_same_day_spatial_index_reduces_intersection_calls_for_separated_compone
 
 
 @pytest.mark.unit
-def test_merge_tie_uses_previous_daily_footprint_id() -> None:
-    """Break an equal-overlap merge by the previous daily ID, not birth key.
+def test_merge_tie_uses_previous_daily_footprint_digest() -> None:
+    """Break an equal-overlap merge using ordering separate from permanent IDs.
 
     Args:
         None.
@@ -1120,30 +1129,105 @@ def test_merge_tie_uses_previous_daily_footprint_id() -> None:
         ``pytest tests/test_wave_tracking.py -k merge_tie_uses``
 
     Steps:
-        1. Continue two equal footprints until their daily ID order differs from their birth key order.
-        2. Merge them and check that the daily ID selects the survivor.
+        1. Continue two equal footprints with daily ordering opposite their cell-ID order.
+        2. Merge them and check that the daily footprint digest selects the survivor.
     """
     left = _component(_DAY_1, 1, box(0, 0, 4, 1))
     right = _component(_DAY_1, 2, box(4, 0, 8, 1))
     previous = _seed(_DAY_1, left, right).current
-    for day in np.arange(_DAY_2, np.datetime64("2024-01-07")):
-        previous = track_reuters_waves(
-            date=day,
-            series=_SERIES,
-            components=(
-                _component(day, 1, box(0, 0, 4, 1)),
-                _component(day, 2, box(4, 0, 8, 1)),
-            ),
-            previous=previous,
-        ).current
-    ordered = sorted(previous, key=lambda record: record.component_id)
-    assert ordered[0].wave_id != min(record.wave_id for record in previous)
-    merged_day = np.datetime64("2024-01-07")
-    merged = _component(merged_day, 1, box(0, 0, 8, 1))
+    lower_id, higher_id = sorted(
+        (
+            _component(_DAY_2, 1, box(0, 0, 4, 1)),
+            _component(_DAY_2, 2, box(4, 0, 8, 1)),
+        ),
+        key=lambda component: component.component_id,
+    )
+    previous = track_reuters_waves(
+        date=_DAY_2,
+        series=_SERIES,
+        components=(
+            replace(lower_id, order_digest="f" * 32),
+            replace(higher_id, order_digest="0" * 32),
+        ),
+        previous=previous,
+    ).current
+    ordered = sorted(previous, key=lambda record: record.component.order_digest)
+    assert ordered[0].component_id == higher_id.component_id
+    merged = _component(_DAY_3, 1, box(0, 0, 8, 1))
     update = track_reuters_waves(
-        date=merged_day, series=_SERIES, components=(merged,), previous=previous
+        date=_DAY_3, series=_SERIES, components=(merged,), previous=previous
     )
     assert update.current[0].wave_id == ordered[0].wave_id
+    assert update.current[0].birth_order_digest == ordered[0].birth_order_digest
+
+
+@pytest.mark.unit
+def test_duplicate_full_daily_ordering_digests_are_rejected() -> None:
+    """Reject distinct footprints claiming an identical complete daily order.
+
+    Args:
+        None.
+
+    Returns:
+        None. A full digest collision cannot depend on supplied row order.
+
+    Examples:
+        pytest tests/test_wave_tracking.py -k duplicate_full_daily_ordering
+    """
+    first = _component(_DAY_1, 1, box(0, 0, 4, 1), order_digest="a" * 32)
+    second = _component(_DAY_1, 2, box(4, 0, 8, 1), order_digest="a" * 32)
+    with pytest.raises(WaveTrackingError, match="ordering digests must be unique"):
+        _seed(_DAY_1, first, second)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("digest", [None, "abc", "A" * 32, 7])
+def test_daily_ordering_requires_a_complete_lowercase_digest(digest) -> None:
+    """Reject malformed supplied ordering fields before using them to sort.
+
+    Args:
+        digest: Missing, short, uppercase or nontext ordering field.
+
+    Returns:
+        None. The tracker reports the field rather than computing a replacement.
+
+    Examples:
+        pytest tests/test_wave_tracking.py -k daily_ordering_requires
+    """
+    component = _component(_DAY_1, 1, box(0, 0, 4, 1))
+    with pytest.raises(WaveTrackingError, match="order_digest"):
+        _seed(_DAY_1, replace(component, order_digest=digest))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value"), [("birth_order_digest", "e" * 32), ("name", "Changed 2024")]
+)
+def test_continued_output_cannot_change_birth_order_or_assigned_name(
+    field, value
+) -> None:
+    """Check inheritance independently of the code that constructs a continuation.
+
+    Args:
+        field: Retained birth ordering or name field to alter.
+        value: A replacement that must not overwrite preceding state.
+
+    Returns:
+        None. Output validation rejects changed continuation facts.
+
+    Examples:
+        pytest tests/test_wave_tracking.py -k continued_output_cannot_change
+    """
+    previous = _seed(_DAY_1, _component(_DAY_1, 1, box(0, 0, 4, 1))).current
+    update = track_reuters_waves(
+        date=_DAY_2,
+        series=_SERIES,
+        components=(_component(_DAY_2, 1, box(0, 0, 4, 1)),),
+        previous=previous,
+    )
+    altered = replace(update.current[0], **{field: value})
+    with pytest.raises(WaveTrackingError, match="retain their birth ordering digest"):
+        _validate_output(previous, (altered,), update.ended, update.lineage)
 
 
 @pytest.mark.unit

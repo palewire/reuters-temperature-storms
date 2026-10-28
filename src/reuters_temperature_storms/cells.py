@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Self
 from uuid import uuid4
@@ -20,7 +21,6 @@ from .schemas import WaveCellSchema
 from .source import DailyFileSource
 
 if TYPE_CHECKING:
-    from datetime import date
     from os import PathLike
 
     from fsspec.spec import AbstractFileSystem
@@ -100,6 +100,41 @@ class WaveCells:
             self.schema.validate(self.frame)
         except (SchemaError, SchemaErrors) as error:
             raise WaveCellError(f"invalid wave-cell table: {error}") from error
+
+    @classmethod
+    def empty(cls, day: date) -> Self:
+        """Create typed native cells for an explicitly empty observation date.
+
+        Args:
+            day: Plain calendar date that the caller has declared empty.
+
+        Returns:
+            A validated empty table with the same coordinate, role, geometry
+            and date columns as a stored daily native-cell file.
+
+        Raises:
+            WaveCellError: If the requested date includes a time or is not a date.
+
+        Examples:
+            cells = WaveCells.empty(date(1960, 1, 1))
+        """
+        if not isinstance(day, date) or isinstance(day, datetime):
+            raise WaveCellError("day must be a plain calendar date")
+        return cls(
+            gpd.GeoDataFrame(
+                {
+                    "longitude": pd.Series(dtype="float64"),
+                    "latitude": pd.Series(dtype="float64"),
+                    "days": pd.Series(dtype="float64"),
+                    "grace_days": pd.Series(dtype="float64"),
+                    "gap_filled": pd.Series(dtype="bool"),
+                    "geometry": gpd.GeoSeries([], crs=4326),
+                    "date": pd.Series(dtype="datetime64[ns]"),
+                },
+                geometry="geometry",
+                crs=4326,
+            )
+        )
 
     @classmethod
     def read_parquet(
@@ -279,41 +314,64 @@ class WaveCellSource(DailyFileSource):
     kind: ClassVar[str] = "wave-cells"
     error_type: ClassVar[type[ValueError]] = WaveCellError
 
-    def read(self, day: date, series: WaveSeries) -> tuple[ComponentMembership, ...]:
-        """Build tracker components from one existing mature-cell file.
+    def read_cells(self, day: date, series: WaveSeries) -> WaveCells:
+        """Read the complete native-cell context for one date without building shapes.
 
         Steps:
             1. Check the requested date and series and select their daily path.
             2. Read and check the cell table. Allow a missing file only when that
                date was explicitly declared empty.
             3. Reject nonempty files on dates declared empty.
-            4. Build the wave footprints, check their date and geometry-based
-               identifiers, and return the daily shapes needed by the tracker.
+            4. Keep every accepted cell, including isolated gap-filled cells that
+               do not become retained footprints.
 
         Args:
             day: Requested plain calendar date.
             series: Maximum/minimum and warm/cold scientific series.
 
         Returns:
-            Daily components produced by the same wave-footprint builder. A
-            declared missing empty date returns an empty tuple.
+            Once-validated complete native cells. A declared missing empty date
+            returns a typed empty table.
 
         Raises:
             FileNotFoundError: If an undeclared daily cell file is missing.
             WaveCellError: If an input or declared empty date contains invalid rows.
-            FootprintError: If footprint construction or identity fails.
 
         Examples:
             source = WaveCellSource("/data/wave-cells/era5")
-            components = source.read(date(2024, 7, 1), series)
+            cells = source.read_cells(date(2024, 7, 1), series)
         """
         path = self.path_for(day, series)
         try:
             cells = WaveCells.read_parquet(path, filesystem=self._filesystem)
         except FileNotFoundError:
             if day in self.known_empty_dates:
-                return ()
+                return WaveCells.empty(day)
             raise
         if day in self.known_empty_dates and not cells.frame.empty:
             raise WaveCellError(f"{path}: declared empty date contains wave-cell rows")
-        return WaveFootprints.from_cells(cells, day, series).to_components(day, series)
+        return cells
+
+    def read(self, day: date, series: WaveSeries) -> tuple[ComponentMembership, ...]:
+        """Build footprints and historical order from the same complete native cells.
+
+        Args:
+            day: Requested plain calendar date.
+            series: Maximum/minimum and warm/cold scientific series.
+
+        Returns:
+            Daily components with stable cell IDs and historical ordering
+            digests. An accepted empty date returns an empty tuple.
+
+        Raises:
+            FileNotFoundError: If an undeclared daily cell file is missing.
+            WaveCellError: If the native cells or declared empty date are invalid.
+            FootprintError: If footprint construction or ordering fails.
+
+        Examples:
+            components = WaveCellSource("/data/cells").read(day, series)
+        """
+        cells = self.read_cells(day, series)
+        return WaveFootprints.from_cells(cells, day, series).to_components(
+            day, series, native_cells=cells
+        )

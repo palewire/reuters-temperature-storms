@@ -1,4 +1,4 @@
-"""Check the Reuters name library, issued labels and typing marker in releases."""
+"""Check the Reuters names and typing marker in built release distributions."""
 
 import csv
 import io
@@ -13,8 +13,8 @@ def check_artifacts(directory: Path) -> None:
     """Verify package assets match the source in one wheel and one sdist.
 
     Steps:
-        1. Read the name library and complete issued labels from source.
-        2. Compare both packaged CSVs with source and require the typing marker in both archives.
+        1. Read the bundled source name library and require one wheel and one source distribution.
+        2. Compare the packaged CSV bytes with source and require the typing marker in both archives.
         3. Report success only when every required package asset matches.
 
     Args:
@@ -32,11 +32,6 @@ def check_artifacts(directory: Path) -> None:
     rows = list(csv.reader(io.StringIO(expected.decode("utf-8"))))
     if len(rows) != 2381:
         raise click.ClickException("Expected a CSV header and 2,380 Reuters names.")
-    published_path = source / "data/published_storm_names.csv"
-    published = published_path.read_bytes()
-    published_rows = list(csv.reader(io.StringIO(published.decode("utf-8"))))
-    if len(published_rows) != 2528:
-        raise click.ClickException("Expected a CSV header and all 2,527 issued names.")
     wheels = list(directory.glob("*.whl"))
     sdists = list(directory.glob("*.tar.gz"))
     if len(wheels) != 1 or len(sdists) != 1:
@@ -44,20 +39,11 @@ def check_artifacts(directory: Path) -> None:
             "Expected exactly one wheel and one source distribution."
         )
     csv_member = f"reuters_temperature_storms/data/{names_path.name}"
-    published_member = f"reuters_temperature_storms/data/{published_path.name}"
     with zipfile.ZipFile(wheels[0]) as wheel:
         if csv_member not in wheel.namelist():
             raise click.ClickException("Wheel is missing the Reuters names CSV.")
         if wheel.read(csv_member) != expected:
             raise click.ClickException("Wheel names CSV differs from the source.")
-        if published_member not in wheel.namelist():
-            raise click.ClickException(
-                "Wheel is missing the published assignments CSV."
-            )
-        if wheel.read(published_member) != published:
-            raise click.ClickException(
-                "Wheel published assignments CSV differs from the source."
-            )
         if "reuters_temperature_storms/py.typed" not in wheel.namelist():
             raise click.ClickException("Wheel is missing the typing marker.")
     with tarfile.open(sdists[0]) as sdist:
@@ -76,22 +62,11 @@ def check_artifacts(directory: Path) -> None:
             raise click.ClickException(
                 "Source-distribution names CSV differs from the source."
             )
-        if f"{prefix}/src/{published_member}" not in sdist.getnames():
-            raise click.ClickException(
-                "Source distribution is missing the published assignments CSV."
-            )
-        published_file = sdist.extractfile(f"{prefix}/src/{published_member}")
-        if published_file is None or published_file.read() != published:
-            raise click.ClickException(
-                "Source-distribution published assignments CSV differs from the source."
-            )
         if f"{prefix}/src/reuters_temperature_storms/py.typed" not in sdist.getnames():
             raise click.ClickException(
                 "Source distribution is missing the typing marker."
             )
-    click.echo(
-        "Wheel and sdist preserve both exact Reuters naming CSVs and the typing marker."
-    )
+    click.echo("Wheel and sdist preserve the exact Reuters CSV and typing marker.")
 
 
 @click.command()

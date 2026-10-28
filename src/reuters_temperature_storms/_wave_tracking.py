@@ -17,6 +17,7 @@ from .components import (
     _ROLE_AREA_RELATIVE_TOLERANCE,
     ComponentMembership,
     DailyWaveComponentGeometry,
+    _is_order_digest,
     _relative_difference,
 )
 from .identity import (
@@ -64,6 +65,8 @@ class TrackedWaveComponent:
         start_date: Calendar day on which this wave began.
         birth_cell_id: First occupied cell in the complete birth footprint,
             retained unchanged throughout this wave's history.
+        birth_order_digest: Complete ordering digest from the birth footprint,
+            retained when the wave moves or qualifies for a name later.
         peak_qualified_area: Largest qualified area observed so far.
         peak_date: First date of that largest area.
         continues: Whether today's footprint kept an earlier wave identity.
@@ -81,6 +84,7 @@ class TrackedWaveComponent:
     wave_id: str
     start_date: np.datetime64
     birth_cell_id: int
+    birth_order_digest: str
     peak_qualified_area: float
     peak_date: np.datetime64
     continues: bool
@@ -314,7 +318,13 @@ def _track_reuters_waves(
         current = tuple(
             _new_record(component, series, day, 0.0) for component in ordered_components
         )
-        return WaveTrackingUpdate(day, series, current, (), ())
+        return WaveTrackingUpdate(
+            day,
+            series,
+            tuple(sorted(current, key=lambda record: record.wave_id)),
+            (),
+            (),
+        )
     if not ordered_previous:
         msg = "no previous tracked waves; start the series with seed=True"
         raise WaveTrackingError(msg)
@@ -392,6 +402,7 @@ def _track_reuters_waves(
             wave_id=record.wave_id,
             start_date=record.start_date,
             birth_cell_id=record.birth_cell_id,
+            birth_order_digest=record.birth_order_digest,
             peak_qualified_area=record.peak_qualified_area,
             peak_date=record.peak_date,
             continues=record.continues,
@@ -463,11 +474,12 @@ def _validate_components(
     *,
     geometry_validator: Callable[[ComponentMembership], None] | None = None,
 ) -> tuple[ComponentMembership, ...]:
-    """Validate and canonically order one day's components before tracking.
+    """Validate and order one day's components before tracking.
 
     Steps:
         1. Check each component's day, membership, and geometry.
-        2. Reject repeated component IDs and return canonical component order.
+        2. Reject repeated component IDs or ordering digests.
+        3. Return the historical footprint order without changing permanent IDs.
 
     Args:
         day: The tracking day that every component must represent.
@@ -476,7 +488,7 @@ def _validate_components(
         geometry_validator: Optional geometry checker for immutable geometries.
 
     Returns:
-        Components in ascending component-ID order after all membership,
+        Components in ascending full footprint-digest order after all membership,
         geometry, role-area, and positive-overlap checks pass.
 
     Raises:
@@ -493,14 +505,25 @@ def _validate_components(
     if any(not isinstance(component, ComponentMembership) for component in supplied):
         msg = "components must contain ComponentMembership records"
         raise TypeError(msg)
-    ordered = tuple(sorted(supplied, key=lambda component: component.component_id))
+    for component in supplied:
+        if not _is_order_digest(component.order_digest):
+            raise WaveTrackingError(
+                "order_digest must be a 32-character lowercase footprint digest"
+            )
+    ordered = tuple(sorted(supplied, key=lambda component: component.order_digest))
     component_ids: set[str] = set()
+    order_digests: set[str] = set()
     labels: set[int] = set()
     for component in ordered:
         if component.component_id in component_ids:
             msg = "component IDs must be unique within one branch and date"
             raise WaveTrackingError(msg)
         component_ids.add(component.component_id)
+        if component.order_digest in order_digests:
+            raise WaveTrackingError(
+                "footprint ordering digests must be unique within one branch and date"
+            )
+        order_digests.add(component.order_digest)
         if _as_day(component.geometry.time, "component time") != day:
             msg = "all components must belong to the tracking date"
             raise WaveTrackingError(msg)
@@ -560,6 +583,10 @@ def _validate_component_membership(
     ):
         msg = "component_id must be a 32-character lowercase date-and-cell digest"
         raise WaveTrackingError(msg)
+    if not _is_order_digest(component.order_digest):
+        raise WaveTrackingError(
+            "order_digest must be a 32-character lowercase footprint digest"
+        )
     expected = component_identity(
         temperature=series.temperature,
         direction=series.direction,
@@ -717,6 +744,8 @@ def _validate_previous(
         raise TypeError(msg)
     ordered = tuple(sorted(supplied, key=lambda record: record.wave_id))
     seen: set[str] = set()
+    daily_orders: set[str] = set()
+    birth_orders: set[tuple[np.datetime64, str]] = set()
     for record in ordered:
         if not _is_wave_id(record.wave_id) or record.wave_id in seen:
             msg = "previous wave IDs must be unique permanent wave IDs"
@@ -729,6 +758,18 @@ def _validate_previous(
         except WaveTrackingError as error:
             msg = f"{error} for wave {record.wave_id}"
             raise WaveTrackingError(msg) from error
+        if record.component.order_digest in daily_orders:
+            raise WaveTrackingError("previous daily ordering digests must be unique")
+        daily_orders.add(record.component.order_digest)
+        birth_order = (
+            _as_day(record.start_date, "start_date"),
+            record.birth_order_digest,
+        )
+        if birth_order in birth_orders:
+            raise WaveTrackingError(
+                "previous waves must have unique birth ordering keys"
+            )
+        birth_orders.add(birth_order)
     return ordered
 
 
@@ -779,6 +820,7 @@ def _validate_previous_record(
         msg = "previous wave key birth-date prefix must match start_date"
         raise WaveTrackingError(msg)
     _validate_birth_cell(record, "previous")
+    _validate_birth_order(record, "previous")
     peak_date = _as_day(record.peak_date, "peak_date")
     if start_date > previous_day or not start_date <= peak_date <= previous_day:
         msg = "previous wave dates must run from start_date through its component date"
@@ -947,7 +989,7 @@ def _best_overlap(
 
     Steps:
         1. Order intersections by descending area.
-        2. Break ties by predecessor birth date and component ID.
+        2. Break ties by predecessor birth date and its daily footprint digest.
 
     Args:
         matches: Measured predecessor intersections.
@@ -965,7 +1007,7 @@ def _best_overlap(
             key=lambda match: (
                 -match.area,
                 _as_day(previous[match.predecessor_index].start_date, "start_date"),
-                previous[match.predecessor_index].component_id,
+                previous[match.predecessor_index].component.order_digest,
             ),
         )
         if matches
@@ -983,7 +1025,7 @@ def _successors(
     Steps:
         1. Validate each predecessor overlap share.
         2. Keep candidates covering the continuation threshold.
-        3. Choose each predecessor's largest overlap, breaking ties by component ID.
+        3. Choose each predecessor's largest overlap, breaking ties by today's footprint digest.
 
     Args:
         overlaps: Current component indices mapped to predecessor intersections.
@@ -1013,7 +1055,7 @@ def _successors(
             successors,
             key=lambda successor: (
                 -successor[1].area,
-                components[successor[0]].component_id,
+                components[successor[0]].order_digest,
             ),
         )[0]
         for predecessor_index, successors in eligible.items()
@@ -1055,7 +1097,7 @@ def _best_parent(
 
     Steps:
         1. Keep overlaps meeting the current component coverage threshold.
-        2. Choose the largest overlap, breaking ties by birth date and ID.
+        2. Choose the largest overlap, breaking ties by birth date and the preceding daily footprint digest.
 
     Args:
         matches: Measured predecessor intersections.
@@ -1079,7 +1121,7 @@ def _best_parent(
             key=lambda match: (
                 -match.area,
                 _as_day(previous[match.predecessor_index].start_date, "start_date"),
-                previous[match.predecessor_index].component_id,
+                previous[match.predecessor_index].component.order_digest,
             ),
         )
         if candidates
@@ -1152,7 +1194,7 @@ def _continued_record(
 
     Steps:
         1. Compare today's qualified area with the previous peak.
-        2. Carry forward the permanent ID, birth date, birth cell and name so movement cannot change naming facts.
+        2. Carry forward the permanent ID, birth date, birth cell, birth ordering digest and name so movement cannot change those facts.
 
     Args:
         predecessor: Preceding record whose identity and name continue.
@@ -1183,6 +1225,7 @@ def _continued_record(
         predecessor.wave_id,
         _as_day(predecessor.start_date, "start_date"),
         predecessor.birth_cell_id,
+        predecessor.birth_order_digest,
         peak_qualified_area,
         peak_date,
         True,
@@ -1202,7 +1245,7 @@ def _new_record(
 
     Steps:
         1. Derive a permanent ID from the birth date and component hash.
-        2. Keep the first occupied cell from the complete birth footprint for later naming.
+        2. Keep the first occupied birth cell for permanent-ID checks and the birth footprint digest for later naming order.
         3. Initialize peak area and peak date from today's component.
 
     Args:
@@ -1230,6 +1273,7 @@ def _new_record(
         wave_id,
         day,
         FootprintIdentity(day, component.geometry.full_geometry).cell_id,
+        component.order_digest,
         component.geometry.area_qualified,
         day,
         False,
@@ -1397,6 +1441,41 @@ def _validate_birth_cell(record: TrackedWaveComponent, subject: str) -> None:
         )
 
 
+def _validate_birth_order(record: TrackedWaveComponent, subject: str) -> None:
+    """Check retained naming order without measuring a later footprint.
+
+    A wave can move before earning a name. Its current shape cannot recover
+    its birth ordering, so saved continuations must carry the original digest.
+
+    Args:
+        record: Active or final wave record with its saved birth ordering digest.
+        subject: Plain-language label used in validation errors.
+
+    Returns:
+        None when the digest is complete and a birth record matches today's
+        component ordering digest.
+
+    Raises:
+        WaveTrackingError: If the saved digest is malformed or a birth record
+            carries a different daily and birth ordering digest.
+
+    Examples:
+        ``_validate_birth_order(record, "previous")`` checks a resumed wave.
+    """
+    if not _is_order_digest(record.birth_order_digest):
+        raise WaveTrackingError(
+            f"{subject} birth_order_digest must be a 32-character lowercase footprint digest"
+        )
+    if (
+        _as_day(record.start_date, "start_date")
+        == _as_day(record.component.geometry.time, "component time")
+        and record.birth_order_digest != record.component.order_digest
+    ):
+        raise WaveTrackingError(
+            f"{subject} birth_order_digest must match the birth component order_digest"
+        )
+
+
 def _validate_output(
     previous: Sequence[TrackedWaveComponent],
     current: Sequence[TrackedWaveComponent],
@@ -1427,9 +1506,27 @@ def _validate_output(
     if len(current_ids) != len(current) or current_ids & ended_ids:
         msg = "tracking output must have one active or ended result for every wave ID"
         raise WaveTrackingError(msg)
-    previous_ids = {record.wave_id for record in previous}
+    previous_by_id = {record.wave_id: record for record in previous}
+    previous_ids = set(previous_by_id)
+    birth_orders: set[tuple[np.datetime64, str]] = set()
     for record in current:
         _validate_birth_cell(record, "current")
+        _validate_birth_order(record, "current")
+        birth_order = (
+            _as_day(record.start_date, "start_date"),
+            record.birth_order_digest,
+        )
+        if birth_order in birth_orders:
+            raise WaveTrackingError("active waves must have unique birth ordering keys")
+        birth_orders.add(birth_order)
+        predecessor = previous_by_id.get(record.wave_id)
+        if predecessor is not None and (
+            record.birth_order_digest != predecessor.birth_order_digest
+            or record.name != predecessor.name
+        ):
+            raise WaveTrackingError(
+                "continued waves must retain their birth ordering digest and assigned name"
+            )
         if (
             len(set(record.parent_wave_ids)) != len(record.parent_wave_ids)
             or record.wave_id in record.parent_wave_ids
@@ -1442,6 +1539,15 @@ def _validate_output(
             raise WaveTrackingError(msg)
     for record in ended:
         _validate_birth_cell(record.final_record, "ended")
+        _validate_birth_order(record.final_record, "ended")
+        predecessor = previous_by_id.get(record.final_record.wave_id)
+        if predecessor is None or (
+            record.final_record.birth_order_digest != predecessor.birth_order_digest
+            or record.final_record.name != predecessor.name
+        ):
+            raise WaveTrackingError(
+                "ended waves must retain their preceding birth ordering digest and assigned name"
+            )
         if (
             record.end_reason == "merged"
             and record.merged_into_wave_id not in current_ids

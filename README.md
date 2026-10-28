@@ -10,41 +10,36 @@ For the Reuters analysis, temperature readings were drawn from the [ERA5 reanaly
 
 Using different temperature readings and baseline climatologies will lead to differing results. Additionally, small differences in computer architecture may affect temperature readings and percentile scores by very small amounts.
 
-RTS includes every one of the 2,527 storm names issued in the published Reuters
-table through September 30, 2026. Each label is bound to the corresponding
-verified physical storm's birth date and original occupied grid cell. The
-tracker uses these packaged assignments when replaying that history. A missing
-or conflicting historical match stops the calculation rather than issuing a
-different name. The story names and the published `all_storms.parquet` file
-remain unchanged.
-
-Future storms receive names from the same fixed Reuters name sequence. When
-several storms become eligible on one day, RTS orders them by birth date and
-the first cell in their original birth footprints. That cell address is saved
-through movement, splits and mergers and checkpoint restarts. Name priority
-therefore does not depend on the hexadecimal ID or polygon formatting. The
-same complete physical input history, naming table and saved sequence position
-produce the same names in RTS and in Climate Monitor.
-
-The assignments, lookup API and naming rule are included in the installed RTS
-package and work offline. Climate Monitor reads its temperature, anomaly,
-footprint and cell inputs from its own production system; issued labels do not
-replace any of those scientific inputs. The historical name table covers the
-maximum-temperature warm series; other temperature/direction series keep their
-independent name sequences.
+Storm names come from the fixed Reuters name library and seed. The naming
+module can generate any position in that sequence without weather data or a
+published storm table:
 
 ```python
-from reuters_temperature_storms import load_published_storm_names
-from reuters_temperature_storms.series import WaveSeries
+from reuters_temperature_storms.naming import name_at_ordinal
 
-names = load_published_storm_names()
-assignment = names.lookup(
-    WaveSeries("tasmax", "warm"),
-    "19870324-ed909ccd8f5f0433953dfe60175b30b7",
-)
-assert assignment is not None
-assert assignment.name == "Wendy 1987"
+first_name = name_at_ordinal(0)
+next_name = name_at_ordinal(1)
 ```
+
+Keeping that sequence is only part of reproducing the published names. When
+several storms first qualify on one day, they must receive those names in the
+same order as the original analysis: birth date, then the original birth
+ordering key. RTS computes those keys from the complete day of occupied native
+cells,
+using the original rectangle, polygon-joining and text order. Keeping the
+complete daily batch matters: the order of disconnected dateline pieces can
+change if a footprint is calculated alone. The package specifies the sorting and joining steps explicitly so macOS and Linux do not
+choose different orders for equal coordinates. Original cell coverage and
+qualifying, grace and gap-fill roles supply this calculation.
+
+Naming keeps the birth ordering key through movement, continuation and merge
+survival. A new split identity gets its own birth key. Daily ordering keys also
+preserve the original tie decisions when overlaps are equal. Public IDs are
+separate from both ordering keys, so refactoring their spelling cannot reorder
+names. Checkpoints retain these facts and the next unused sequence position.
+Given identical complete physical inputs and saved state, RTS and Climate
+Monitor use the same allocation calculation. No issued-name lookup table or
+published storm file supplies runtime assignments.
 
 The tracker identifies a new storm from its birth date and the first occupied
 cell in its complete footprint on the fixed 0.25° grid. Cells are ordered by
@@ -57,8 +52,9 @@ labels remain available for joining associated cell records.
 These IDs use the complete 32-character date-and-cell digest after the birth
 date. Existing catalogs and checkpoints made with the earlier shape-based IDs
 must be rebuilt before using this tracker. Checkpoints also require the
-retained `birth_cell_id`; a later moving footprint cannot supply that original
-cell. The bundled story table remains the record of names used in the published
-Reuters analysis.
+retained `birth_cell_id`, daily `order_digest`, and
+`birth_order_digest`; a later moving footprint cannot supply original birth
+facts. The bundled story table remains the record of names used in the
+published Reuters analysis.
 
 If you have questions about the code or data, you're encouraged to contact [Ben Welsh](mailto:ben.welsh@thomsonreuters.com) and [Maurice Tamman](mailto:maurice.tamman@reuters.com) at Reuters.

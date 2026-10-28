@@ -49,8 +49,15 @@ def main() -> None:
 
 
 @main.command(help="Write daily wave records, lineage and a catalog.")
-@click.option("--wave-footprints", help="Prepared footprint directory or S3 URL.")
-@click.option("--wave-cells", help="Mature wave-cell directory or S3 URL.")
+@click.option(
+    "--wave-footprints",
+    help="Optional prepared shapes used with the complete daily cells.",
+)
+@click.option(
+    "--wave-cells",
+    required=True,
+    help="Complete daily cell directory or S3 URL, including gap-filled cells.",
+)
 @click.option("--profile", help="Caller-selected AWS profile for S3 access.")
 @click.option(
     "--series",
@@ -81,7 +88,7 @@ def main() -> None:
 )
 def run(
     wave_footprints: str | None,
-    wave_cells: str | None,
+    wave_cells: str,
     profile: str | None,
     series: str,
     start_date: datetime,
@@ -100,8 +107,10 @@ def run(
         3. Upload only finished products when requested and report the result location.
 
     Args:
-        wave_footprints: Directory or URL containing prepared footprint Parquets.
-        wave_cells: Directory or URL containing mature wave-cell Parquets.
+        wave_footprints: Optional directory or URL containing prepared footprint
+            shapes and measurements to retain without rebuilding them.
+        wave_cells: Required complete daily cell directory or URL. The original
+            naming order depends on all source cells, including gap-filled cells.
         profile: Caller-selected AWS profile.
         series: Maximum/minimum and warm/cold series to process.
         start_date: First included input date.
@@ -119,12 +128,8 @@ def run(
         click.ClickException: If inputs, tracking or writing fails.
 
     Examples:
-        rts run --wave-footprints ./footprints --start-date 1960-01-05 --end-date 1960-01-06 --output ./waves
+        rts run --wave-cells ./cells --wave-footprints ./footprints --start-date 1960-01-05 --end-date 1960-01-06 --output ./waves
     """
-    if (wave_footprints is None) == (wave_cells is None):
-        raise click.UsageError(
-            "supply exactly one of --wave-footprints or --wave-cells"
-        )
     start, end = start_date.date(), end_date.date()
     empty_dates: tuple[date, ...] = ()
     if empty_through is not None:
@@ -140,13 +145,16 @@ def run(
     try:
         selected = WaveSeries.parse(series)
         source: WaveSource
-        if wave_cells is not None:
-            source = WaveCellSource(wave_cells, options, known_empty_dates=empty_dates)
-        else:
-            assert wave_footprints is not None
+        cell_source = WaveCellSource(wave_cells, options, known_empty_dates=empty_dates)
+        if wave_footprints is not None:
             source = WaveFootprintSource(
-                wave_footprints, options, known_empty_dates=empty_dates
+                wave_footprints,
+                options,
+                known_empty_dates=empty_dates,
+                cell_source=cell_source,
             )
+        else:
+            source = cell_source
         result = run_waves(
             source,
             start,

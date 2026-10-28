@@ -11,12 +11,14 @@ from pyproj import CRS
 from shapely.geometry import Point, Polygon, box
 
 from reuters_temperature_storms._wave_tracking import WaveSeries, _area_km2
+from reuters_temperature_storms.cells import WaveCells, WaveCellSource
 from reuters_temperature_storms.footprints import (
     FootprintError,
     WaveFootprints,
     WaveFootprintSource,
 )
 from reuters_temperature_storms.identity import component_identity
+from tests.fixtures import _native_footprint_cells
 
 DAY = date(2026, 8, 31)
 SERIES = WaveSeries("tasmax", "warm")
@@ -39,7 +41,7 @@ def _table(qualified=None, grace=None):
         1. Build one valid stored summary without invoking cell construction.
     """
     if qualified is None and grace is None:
-        qualified = box(0, 0, 1, 1)
+        qualified = box(-0.125, -0.125, 0.875, 0.875)
     full = (
         qualified
         if grace is None
@@ -83,7 +85,60 @@ def _table(qualified=None, grace=None):
     return table.replace_schema_metadata({b"geo": json.dumps(metadata).encode()})
 
 
-def _write(tmp_path, table, *, day=DAY, field="t2m_max", direction="positive"):
+def _cells(*, day=DAY, offsets=(0,), grace=False):
+    """Construct explicit native companions for the test's simple rectangles.
+
+    Args:
+        day: Calendar date represented by every cell.
+        offsets: Western cell centres of the separated one-degree rectangles.
+        grace: Whether every real cell is in its grace period.
+
+    Returns:
+        Complete native cells for the stated synthetic rectangles and roles.
+
+    Examples:
+        cells = _cells(offsets=(0, 2, 4))
+    """
+    frame = _native_footprint_cells(
+        day,
+        tuple(box(offset - 0.125, -0.125, offset + 0.875, 0.875) for offset in offsets),
+    )
+    if grace:
+        frame["grace_days"] = 1.0
+    return WaveCells(frame)
+
+
+def _source(tmp_path, *, known_empty_dates=()):
+    """Pair the synthetic footprint root with its explicit native cell directory.
+
+    Args:
+        tmp_path: Root containing the synthetic footprint and native-cell files.
+        known_empty_dates: Plain dates explicitly permitted to lack empty files.
+
+    Returns:
+        Prepared-footprint reader with a complete native-cell companion.
+
+    Examples:
+        components = _source(tmp_path).read(DAY, SERIES)
+    """
+    return WaveFootprintSource(
+        str(tmp_path),
+        known_empty_dates=known_empty_dates,
+        cell_source=WaveCellSource(
+            str(tmp_path / "native-cells"), known_empty_dates=known_empty_dates
+        ),
+    )
+
+
+def _write(
+    tmp_path,
+    table,
+    *,
+    day=DAY,
+    field="t2m_max",
+    direction="positive",
+    native_cells=None,
+):
     """Write one synthetic daily footprint file in the field/direction layout.
 
     Args:
@@ -92,6 +147,7 @@ def _write(tmp_path, table, *, day=DAY, field="t2m_max", direction="positive"):
         day: Date used in the filename.
         field: Temperature field directory.
         direction: Direction directory.
+        native_cells: Explicit cell companion, or the default qualifying rectangle.
 
     Returns:
         Path to the newly written Parquet file.
@@ -105,6 +161,8 @@ def _write(tmp_path, table, *, day=DAY, field="t2m_max", direction="positive"):
     path = tmp_path / field / direction / f"{day.isoformat()}.parquet"
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, path)
+    cells_path = tmp_path / "native-cells" / field / direction / path.name
+    (_cells(day=day) if native_cells is None else native_cells).to_parquet(cells_path)
     return path
 
 
@@ -147,7 +205,7 @@ def test_reader_preserves_shapes_ids_and_scalars(tmp_path):
     """
     table = _table()
     path = _write(tmp_path, table)
-    source = WaveFootprintSource(str(tmp_path))
+    source = _source(tmp_path)
     (component,) = source.read(DAY, SERIES)
     assert component.component_id == table["storm_id"][0].as_py()
     assert component.geometry.full_geometry.wkb == table["buffer_geometry"][0].as_py()
@@ -171,8 +229,12 @@ def test_grace_only_footprint_is_preserved(tmp_path):
     Examples:
         Run ``pytest tests/test_footprints.py -k grace_only_footprint_is_preserved``.
     """
-    _write(tmp_path, _table(grace=box(0, 0, 1, 1)))
-    (component,) = WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
+    _write(
+        tmp_path,
+        _table(grace=box(-0.125, -0.125, 0.875, 0.875)),
+        native_cells=_cells(grace=True),
+    )
+    (component,) = _source(tmp_path).read(DAY, SERIES)
     assert component.geometry.geometry is None
     assert component.geometry.grace_geometry is not None
     assert component.geometry.qualified_fraction == 0
@@ -194,7 +256,7 @@ def test_reader_accepts_omitted_zero_grace_column(tmp_path):
         Run ``pytest tests/test_footprints.py -k reader_accepts_omitted_zero_grace_column``.
     """
     _write(tmp_path, _table().drop_columns("grace_geometry"))
-    (component,) = WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
+    (component,) = _source(tmp_path).read(DAY, SERIES)
     assert component.geometry.grace_geometry is None
 
 
@@ -213,9 +275,12 @@ def test_missing_grace_shape_with_positive_area_is_rejected(tmp_path):
     Examples:
         Run ``pytest tests/test_footprints.py -k missing_grace_shape_with_positive_area_is_rejected``.
     """
-    _write(tmp_path, _table(grace=box(0, 0, 1, 1)).drop_columns("grace_geometry"))
+    _write(
+        tmp_path,
+        _table(grace=box(-0.125, -0.125, 0.875, 0.875)).drop_columns("grace_geometry"),
+    )
     with pytest.raises(FootprintError, match="grace"):
-        WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
+        _source(tmp_path).read(DAY, SERIES)
 
 
 def test_missing_day_requires_explicit_empty_declaration(tmp_path):
@@ -234,8 +299,8 @@ def test_missing_day_requires_explicit_empty_declaration(tmp_path):
         Run ``pytest tests/test_footprints.py -k missing_day_requires_explicit_empty_declaration``.
     """
     with pytest.raises(FileNotFoundError):
-        WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
-    source = WaveFootprintSource(str(tmp_path), known_empty_dates=(DAY,))
+        _source(tmp_path).read(DAY, SERIES)
+    source = _source(tmp_path, known_empty_dates=(DAY,))
     assert source.read(DAY, SERIES) == ()
     assert source.list_files(SERIES) == {}
     with pytest.raises(FileNotFoundError):
@@ -259,7 +324,7 @@ def test_declared_empty_date_rejects_existing_waves(tmp_path):
     """
     _write(tmp_path, _table())
     with pytest.raises(FootprintError, match="declared empty date"):
-        WaveFootprintSource(str(tmp_path), known_empty_dates=(DAY,)).read(DAY, SERIES)
+        _source(tmp_path, known_empty_dates=(DAY,)).read(DAY, SERIES)
 
 
 def test_typed_empty_file_is_accepted(tmp_path):
@@ -277,12 +342,9 @@ def test_typed_empty_file_is_accepted(tmp_path):
     Examples:
         Run ``pytest tests/test_footprints.py -k typed_empty_file_is_accepted``.
     """
-    _write(tmp_path, _table().slice(0, 0))
-    assert WaveFootprintSource(str(tmp_path)).read(DAY, SERIES) == ()
-    assert (
-        WaveFootprintSource(str(tmp_path), known_empty_dates=(DAY,)).read(DAY, SERIES)
-        == ()
-    )
+    _write(tmp_path, _table().slice(0, 0), native_cells=WaveCells.empty(DAY))
+    assert _source(tmp_path).read(DAY, SERIES) == ()
+    assert _source(tmp_path, known_empty_dates=(DAY,)).read(DAY, SERIES) == ()
 
 
 @pytest.mark.parametrize(
@@ -335,7 +397,7 @@ def test_reader_selects_requested_series(tmp_path, series, field, direction):
         Run ``pytest tests/test_footprints.py -k reader_selects_requested_series``.
     """
     _write(tmp_path, _table(), field=field, direction=direction)
-    assert len(WaveFootprintSource(str(tmp_path)).read(DAY, series)) == 1
+    assert len(_source(tmp_path).read(DAY, series)) == 1
 
 
 def test_duplicate_ids_are_rejected(tmp_path):
@@ -356,7 +418,7 @@ def test_duplicate_ids_are_rejected(tmp_path):
     table = _table()
     _write(tmp_path, pa.concat_tables([table, table]))
     with pytest.raises(FootprintError, match="storm_id"):
-        WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
+        _source(tmp_path).read(DAY, SERIES)
 
 
 @pytest.mark.parametrize(
@@ -400,7 +462,7 @@ def test_bad_values_are_rejected(tmp_path, name, value, message):
     table = _table()
     _write(tmp_path, _replace(table, name, [value], table.schema.field(name).type))
     with pytest.raises(FootprintError, match=message):
-        WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
+        _source(tmp_path).read(DAY, SERIES)
 
 
 @pytest.mark.parametrize(
@@ -438,7 +500,7 @@ def test_invalid_geo_metadata_is_rejected(tmp_path, mutation):
         table = table.replace_schema_metadata({b"geo": json.dumps(geo).encode()})
     _write(tmp_path, table)
     with pytest.raises(FootprintError, match="GeoParquet"):
-        WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
+        _source(tmp_path).read(DAY, SERIES)
 
 
 def test_default_crs84_geo_metadata_is_accepted(tmp_path):
@@ -461,7 +523,7 @@ def test_default_crs84_geo_metadata_is_accepted(tmp_path):
     for column in geo["columns"].values():
         del column["crs"]
     _write(tmp_path, table.replace_schema_metadata({b"geo": json.dumps(geo).encode()}))
-    assert len(WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)) == 1
+    assert len(_source(tmp_path).read(DAY, SERIES)) == 1
 
 
 @pytest.mark.parametrize("mutation", ["missing", "extra", "type", "date_type"])
@@ -492,7 +554,7 @@ def test_invalid_columns_are_rejected_even_when_empty(tmp_path, mutation):
         table = _replace(table, "date", [], pa.string())
     _write(tmp_path, table)
     with pytest.raises(FootprintError, match="column"):
-        WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
+        _source(tmp_path).read(DAY, SERIES)
 
 
 @pytest.mark.parametrize(
@@ -526,9 +588,9 @@ def test_date_types_preserve_calendar_midnight(tmp_path, data_type):
     table = _table()
     baseline_path = tmp_path / "baseline"
     _write(baseline_path, table)
-    baseline = WaveFootprintSource(str(baseline_path)).read(DAY, SERIES)
+    baseline = _source(baseline_path).read(DAY, SERIES)
     _write(tmp_path, table.set_column(1, "date", table["date"].cast(data_type)))
-    assert WaveFootprintSource(str(tmp_path)).read(DAY, SERIES) == baseline
+    assert _source(tmp_path).read(DAY, SERIES) == baseline
 
 
 @pytest.mark.parametrize(
@@ -562,7 +624,7 @@ def test_required_nulls_are_rejected(tmp_path, name, message):
     table = _table()
     _write(tmp_path, _replace(table, name, [None], table.schema.field(name).type))
     with pytest.raises(FootprintError, match=message):
-        WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
+        _source(tmp_path).read(DAY, SERIES)
 
 
 @pytest.mark.parametrize("offset", [1, 1_000, 3_600_000_000_000])
@@ -587,7 +649,7 @@ def test_timestamp_rejects_any_nonmidnight_precision(tmp_path, offset):
     values = pa.array([midnight + offset], type=pa.timestamp("ns"))
     _write(tmp_path, table.set_column(1, "date", values))
     with pytest.raises(FootprintError, match="date"):
-        WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
+        _source(tmp_path).read(DAY, SERIES)
 
 
 def test_timezone_timestamp_is_rejected(tmp_path):
@@ -616,7 +678,7 @@ def test_timezone_timestamp_is_rejected(tmp_path):
         ),
     )
     with pytest.raises(FootprintError, match="timezone-free"):
-        WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
+        _source(tmp_path).read(DAY, SERIES)
 
 
 def test_row_groups_preserve_scalars_and_sorted_components(tmp_path):
@@ -627,17 +689,19 @@ def test_row_groups_preserve_scalars_and_sorted_components(tmp_path):
 
     Returns:
         None. The reader retains WKB, input labels and float values while
-        assigning component numbers in canonical daily-ID order.
+        assigning component numbers in historical footprint-digest order.
 
     Examples:
         pytest tests/test_footprints.py -k chunked_rows
 
     Steps:
         1. Read unsorted row groups with optional nulls and original scalar precision.
-        2. Replace the input labels independently of the canonical identities.
+        2. Replace the input labels independently of the cell identities and ordering digests.
         3. Check stable component order, original labels and exact physical values.
     """
-    tables = [_table(box(i, 0, i + 1, 1)) for i in range(3)]
+    tables = [
+        _table(box(2 * i - 0.125, -0.125, 2 * i + 0.875, 0.875)) for i in range(3)
+    ]
     table = pa.concat_tables(tables)
     daily_ids = table["storm_id"].to_pylist()
     table = _replace(table, "storm_id", [f"{index:032x}" for index in range(3)])
@@ -647,14 +711,15 @@ def test_row_groups_preserve_scalars_and_sorted_components(tmp_path):
     for name in ("geometry", "grace_geometry", "buffer_geometry"):
         index = table.schema.get_field_index(name)
         table = table.set_column(index, name, table[name].cast(pa.large_binary()))
-    ordered_indices = sorted(range(table.num_rows), key=lambda index: daily_ids[index])
-    shuffled = table.take(pa.array(list(reversed(ordered_indices))))
-    path = _write(tmp_path, shuffled)
+    shuffled = table.take(pa.array([2, 1, 0]))
+    path = _write(tmp_path, shuffled, native_cells=_cells(offsets=(0, 2, 4)))
     pq.write_table(shuffled, path, row_group_size=1)
-    components = WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
-    for label, (component, index) in enumerate(
-        zip(components, ordered_indices, strict=True), 1
-    ):
+    components = _source(tmp_path).read(DAY, SERIES)
+    assert [component.order_digest for component in components] == sorted(
+        component.order_digest for component in components
+    )
+    for label, component in enumerate(components, 1):
+        index = daily_ids.index(component.component_id)
         assert component.component_id == daily_ids[index]
         assert component.input_id == table["storm_id"][index].as_py()
         geometry = component.geometry
@@ -669,6 +734,47 @@ def test_row_groups_preserve_scalars_and_sorted_components(tmp_path):
             "qualified_fraction",
         ):
             assert getattr(geometry, name) == table[name][index].as_py()
+
+
+def test_arbitrary_polygon_is_rejected_when_computing_historical_order(tmp_path):
+    """Keep shape reading available while requiring native coverage for ordering.
+
+    Args:
+        tmp_path: Temporary directory for a valid but nonnative stored rectangle.
+
+    Returns:
+        None. Ordering reports unsupported coverage without altering stored shapes.
+
+    Examples:
+        pytest tests/test_footprints.py -k arbitrary_polygon_is_rejected
+    """
+    path = _write(tmp_path, _table(box(0, 0, 1, 1)))
+    footprints = WaveFootprints.read_parquet(path)
+    saved_shape = footprints.frame.buffer_geometry.iloc[0].wkb
+    with pytest.raises(FootprintError, match="cannot compute historical ordering"):
+        footprints.to_components(DAY, SERIES, native_cells=_cells())
+    assert footprints.frame.buffer_geometry.iloc[0].wkb == saved_shape
+
+
+def test_prepared_tracking_requires_an_explicit_native_cell_source(tmp_path):
+    """Read and list stored shapes without guessing their complete cell context.
+
+    Args:
+        tmp_path: Root containing a valid footprint and its explicit cell companion.
+
+    Returns:
+        None. The tracking interface rejects absent configuration while ordinary
+        schema checks and file listings still work.
+
+    Examples:
+        pytest tests/test_footprints.py -k explicit_native_cell_source
+    """
+    path = _write(tmp_path, _table())
+    source = WaveFootprintSource(str(tmp_path))
+    assert source.list_files(SERIES) == {path.name: path.stat().st_size}
+    WaveFootprints.read_parquet(path).validate_day(DAY, SERIES)
+    with pytest.raises(FootprintError, match="cell_source"):
+        source.read(DAY, SERIES)
 
 
 @pytest.mark.parametrize("data_type", [pa.float32(), pa.float64()])
@@ -695,7 +801,7 @@ def test_numeric_columns_preserve_supplied_float_values(tmp_path, data_type):
     table = _replace(table, "area_qualified", [area], data_type)
     table = _replace(table, "qualified_fraction", [fraction], data_type)
     _write(tmp_path, table)
-    (component,) = WaveFootprintSource(str(tmp_path)).read(DAY, SERIES)
+    (component,) = _source(tmp_path).read(DAY, SERIES)
     assert component.geometry.area_qualified == table["area_qualified"][0].as_py()
     assert (
         component.geometry.qualified_fraction == table["qualified_fraction"][0].as_py()
@@ -752,7 +858,7 @@ def test_footprint_table_validates_once_and_preserves_caller_frame(
     monkeypatch.setattr(schema, "validate", classmethod(counted))
     table = WaveFootprints.read_parquet(path)
     assert len(calls) == 1
-    (component,) = table.to_components(DAY, SERIES)
+    (component,) = table.to_components(DAY, SERIES, native_cells=_cells())
     assert len(calls) == 1
     assert (
         component.geometry.full_geometry.wkb == table.frame.buffer_geometry.iloc[0].wkb

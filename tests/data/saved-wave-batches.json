@@ -23,7 +23,9 @@
           "area_gap_filled": 0.0,
           "qualified_fraction": 1.0
         },
-        "birth_cell_id": 403839
+        "birth_cell_id": 403839,
+        "order_digest": "6e71a1aafec66d7d69c5f856254ded45",
+        "birth_order_digest": "6e71a1aafec66d7d69c5f856254ded45"
       }
     ],
     "ended": [],
@@ -55,7 +57,9 @@
           "area_gap_filled": 0.0,
           "qualified_fraction": 1.0
         },
-        "birth_cell_id": 403923
+        "birth_cell_id": 403923,
+        "order_digest": "c56c6bd22dc7a9a9a6d0d516e6c6c7c2",
+        "birth_order_digest": "c56c6bd22dc7a9a9a6d0d516e6c6c7c2"
       },
       {
         "component_id": "f743159eeb5053a2ac8db65ecd9ac3fe",
@@ -80,7 +84,9 @@
           "area_gap_filled": 0.0,
           "qualified_fraction": 1.0
         },
-        "birth_cell_id": 403839
+        "birth_cell_id": 403839,
+        "order_digest": "f743159eeb5053a2ac8db65ecd9ac3fe",
+        "birth_order_digest": "f743159eeb5053a2ac8db65ecd9ac3fe"
       }
     ],
     "ended": [
@@ -106,7 +112,9 @@
             "area_gap_filled": 0.0,
             "qualified_fraction": 1.0
           },
-          "birth_cell_id": 403839
+          "birth_cell_id": 403839,
+          "order_digest": "6e71a1aafec66d7d69c5f856254ded45",
+          "birth_order_digest": "6e71a1aafec66d7d69c5f856254ded45"
         },
         "end_date": "2023-12-31",
         "end_reason": "died",
@@ -154,7 +162,9 @@
           "area_gap_filled": 0.0,
           "qualified_fraction": 1.0
         },
-        "birth_cell_id": 403923
+        "birth_cell_id": 403923,
+        "order_digest": "4577dcdf561359e44ca9f6e214a62b64",
+        "birth_order_digest": "c56c6bd22dc7a9a9a6d0d516e6c6c7c2"
       }
     ],
     "ended": [
@@ -182,7 +192,9 @@
             "area_gap_filled": 0.0,
             "qualified_fraction": 1.0
           },
-          "birth_cell_id": 403839
+          "birth_cell_id": 403839,
+          "order_digest": "f743159eeb5053a2ac8db65ecd9ac3fe",
+          "birth_order_digest": "f743159eeb5053a2ac8db65ecd9ac3fe"
         },
         "end_date": "2024-01-01",
         "end_reason": "merged",
@@ -226,7 +238,9 @@
             "area_gap_filled": 0.0,
             "qualified_fraction": 1.0
           },
-          "birth_cell_id": 403923
+          "birth_cell_id": 403923,
+          "order_digest": "4577dcdf561359e44ca9f6e214a62b64",
+          "birth_order_digest": "c56c6bd22dc7a9a9a6d0d516e6c6c7c2"
         },
         "end_date": "2024-01-02",
         "end_reason": "died",

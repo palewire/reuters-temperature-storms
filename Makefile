@@ -33,4 +33,4 @@ package-check: build
 	$(UV) venv "$$temp_dir/venv"; \
 	$(UV) pip install --python "$$temp_dir/venv/bin/python" dist/*.whl; \
 	cd "$$temp_dir" && "$$temp_dir/venv/bin/rts" --help; \
-	"$$temp_dir/venv/bin/python" -c 'from reuters_temperature_storms import load_name_library, load_published_storm_names; assert len(load_name_library().entries) == 2380; assert len(load_published_storm_names().assignments) == 2527'
+	"$$temp_dir/venv/bin/python" -c 'from reuters_temperature_storms import load_name_library; assert len(load_name_library().entries) == 2380'

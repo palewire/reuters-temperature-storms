@@ -2,7 +2,6 @@
 
 import json
 
-import pytest
 from click.testing import CliRunner
 
 from reuters_temperature_storms import (
@@ -15,7 +14,46 @@ from reuters_temperature_storms.cli import main
 from reuters_temperature_storms.naming import name_at_ordinal
 from tests.fixtures import create_footprints
 
-pytestmark = pytest.mark.usefixtures("synthetic_name_history")
+
+def test_restart_rejects_a_changed_complete_cell_source(tmp_path):
+    """Do not resume prepared-shape state with a different daily cell input.
+
+    Args:
+        tmp_path: Private temporary input and result directories.
+
+    Returns:
+        None. Checks the saved request before any different cells are read.
+
+    Examples:
+        Run ``pytest tests/test_cli_tracking.py -k changed_complete_cell``.
+    """
+    footprints = tmp_path / "footprints"
+    create_footprints(footprints)
+    cells = footprints.with_name(footprints.name + "-cells")
+    output = tmp_path / "waves"
+    arguments = [
+        "run",
+        "--wave-footprints",
+        str(footprints),
+        "--wave-cells",
+        str(cells),
+        "--start-date",
+        "2020-01-01",
+        "--end-date",
+        "2020-01-05",
+        "--output",
+        str(output),
+    ]
+    runner = CliRunner()
+    started = runner.invoke(main, [*arguments, "--stop-after-days", "2"])
+    assert started.exit_code == 0, started.output
+    changed = [
+        str(tmp_path / "different-cells") if value == str(cells) else value
+        for value in arguments
+    ]
+    resumed = runner.invoke(main, changed)
+    assert resumed.exit_code == 1
+    assert "must match the original request" in resumed.output
 
 
 def test_fresh_and_resumed_cli_results_are_identical(tmp_path):
@@ -43,6 +81,8 @@ def test_fresh_and_resumed_cli_results_are_identical(tmp_path):
         "run",
         "--wave-footprints",
         str(footprints),
+        "--wave-cells",
+        str(footprints.with_name(footprints.name + "-cells")),
         "--start-date",
         "2020-01-01",
         "--end-date",

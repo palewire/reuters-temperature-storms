@@ -334,7 +334,9 @@ def _record(
         area_gap_filled=0.0,
         qualified_fraction=1.0,
     )
-    membership = ComponentMembership(component_id=component_id, geometry=daily)
+    membership = ComponentMembership(
+        component_id=component_id, geometry=daily, order_digest=component_id
+    )
     return TrackedWaveComponent(
         series=series,
         component=membership,
@@ -342,6 +344,7 @@ def _record(
         wave_id=wave_id,
         start_date=np.datetime64(start or day, "D"),
         birth_cell_id=0,
+        birth_order_digest=f"{int(wave_id.split('-')[-1], 16):032x}",
         peak_qualified_area=2.0,
         peak_date=np.datetime64(day, "D"),
         continues=start is not None,

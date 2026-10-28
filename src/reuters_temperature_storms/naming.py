@@ -433,7 +433,7 @@ def seed_sha256(seed: int) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-class _NameSequence:
+class NameSequence:
     """Stateful deterministic traversal of one validated name library.
 
     Steps:
@@ -441,33 +441,39 @@ class _NameSequence:
         2. Advance through the deterministic sequence as names are requested.
 
     Args:
-        library: Validated name library.
+        library: Validated name library, or None for the packaged library.
         seed: Nonnegative integer encoding category and name permutations.
+            The fixed Reuters seed is the default.
 
     Examples:
-        sequence = _NameSequence(library, DEFAULT_NAMES_SEED)
+        sequence = NameSequence()
     """
 
-    def __init__(self, library: NameLibrary, seed: int) -> None:
+    def __init__(
+        self, library: NameLibrary | None = None, seed: int = DEFAULT_NAMES_SEED
+    ) -> None:
         """Build one independently advancing name sequence.
 
         Steps:
-            1. Place names into their group/geography/gender combinations in source order.
+            1. Load the packaged library when none is supplied, keeping names in their original source order.
             2. Decode one permutation of all category combinations from the seed.
             3. Decode each source-order name pool in sorted combination order.
             4. Start at sequence position zero without changing the name library.
 
         Args:
-            library: Validated names and bucket dimensions.
+            library: Validated names and bucket dimensions, or None for the
+                packaged library.
             seed: Nonnegative integer encoding category and name permutations.
+                The fixed Reuters seed is the default.
 
         Returns:
             None.
 
         Examples:
-            ``_NameSequence(library, DEFAULT_NAMES_SEED)`` starts the naming sequence.
+            ``NameSequence()`` starts the published Reuters naming sequence.
         """
         _validate_seed(seed)
+        library = load_name_library() if library is None else library
         unshuffled: dict[BucketKey, list[str]] = {
             (group, geography, gender): []
             for group in library.groups
@@ -585,7 +591,7 @@ def name_at_ordinal(
     """
     _validate_seed(seed)
     selected_library = load_name_library() if library is None else library
-    return _NameSequence(selected_library, seed).name_at_ordinal(ordinal)
+    return NameSequence(selected_library, seed).name_at_ordinal(ordinal)
 
 
 def _validate_seed(seed: int) -> None:

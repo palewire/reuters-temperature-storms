@@ -47,9 +47,6 @@ _SERIES = (
 _AREA_TRANSFORMER = Transformer.from_crs("EPSG:4326", "EPSG:6933", always_xy=True)
 
 
-pytestmark = pytest.mark.usefixtures("synthetic_name_history")
-
-
 def _component(day: date, series: WaveSeries) -> ComponentMembership:
     """Build a measured footprint large enough to receive a Reuters name.
 
@@ -71,13 +68,15 @@ def _component(day: date, series: WaveSeries) -> ComponentMembership:
     shape = box(-20, -20, 20, 20)
     area = float(transform(_AREA_TRANSFORMER.transform, shape).area / 1_000_000)
     day_value = np.datetime64(day, "D")
+    component_id = component_identity(
+        temperature=series.temperature,
+        direction=series.direction,
+        date=day_value,
+        geometry=shape,
+    )
     return ComponentMembership(
-        component_id=component_identity(
-            temperature=series.temperature,
-            direction=series.direction,
-            date=day_value,
-            geometry=shape,
-        ),
+        component_id=component_id,
+        order_digest=component_id,
         geometry=DailyWaveComponentGeometry(
             time=day_value,
             label=1,
@@ -147,6 +146,7 @@ def test_wave_becomes_named_storm_without_changing_identity(
                     date=np.datetime64(day, "D"),
                     geometry=full_shape,
                 ),
+                order_digest=f"{index:032x}",
                 geometry=replace(
                     template.geometry,
                     label=index,
@@ -1123,6 +1123,7 @@ def test_completed_run_extension_matches_fresh_and_resumes(
                     date=np.datetime64(day, "D"),
                     geometry=shape,
                 ),
+                order_digest=f"{index:032x}",
                 geometry=replace(
                     template.geometry,
                     label=index,
