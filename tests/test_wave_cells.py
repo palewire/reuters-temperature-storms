@@ -553,9 +553,10 @@ def test_source_selects_all_series_and_missing_dates_are_explicit(tmp_path, seri
     frame = _frame(((0, 0, "qualified"),))
     path = _write(tmp_path, frame, series=series)
     source = WaveCellSource(str(tmp_path))
+    cells = WaveCells(frame)
     assert source.read(DAY, series) == WaveFootprints.from_cells(
-        WaveCells(frame), DAY, series
-    ).to_components(DAY, series)
+        cells, DAY, series
+    ).to_components(DAY, series, native_cells=cells)
     assert source.list_files(series) == {path.name: path.stat().st_size}
     missing_day = DAY + timedelta(days=1)
     with pytest.raises(FileNotFoundError):
@@ -570,6 +571,30 @@ def test_source_selects_all_series_and_missing_dates_are_explicit(tmp_path, seri
         WaveCellSource(str(tmp_path), known_empty_dates=(DAY,)).read(DAY, series)
     _write(tmp_path, _frame((), day=missing_day), day=missing_day, series=series)
     assert source.read(missing_day, series) == ()
+
+
+def test_native_cell_source_retains_isolated_gap_only_context(tmp_path):
+    """Keep cells that disappear from the retained footprint table.
+
+    Args:
+        tmp_path: Temporary directory for a real cell and a separate gap-only cell.
+
+    Returns:
+        None. The native reader preserves both rows and their shape bytes even
+        though the footprint builder retains only the real-cell component.
+
+    Examples:
+        pytest tests/test_wave_cells.py -k isolated_gap_only_context
+    """
+    frame = _frame(((0, 0, "qualified"), (40, 20, "fill")))
+    _write(tmp_path, frame)
+    cells = WaveCellSource(str(tmp_path)).read_cells(DAY, SERIES)
+    assert cells.frame.equals(frame)
+    assert cells.frame.geometry.to_wkb().tolist() == frame.geometry.to_wkb().tolist()
+    assert len(cells.frame) == 2
+    assert int(cells.frame.gap_filled.sum()) == 1
+    assert len(WaveFootprints.from_cells(cells, DAY, SERIES).frame) == 1
+    assert len(cells.frame) == 2
 
 
 def test_cell_schema_runs_once_per_read_and_not_again_in_construction(
@@ -623,7 +648,7 @@ def test_cell_schema_runs_once_per_read_and_not_again_in_construction(
     cells = WaveCells.read_parquet(path)
     assert len(calls) == 1
     footprints = WaveFootprints.from_cells(cells, DAY, SERIES)
-    footprints.to_components(DAY, SERIES)
+    footprints.to_components(DAY, SERIES, native_cells=cells)
     assert len(calls) == 1
     assert WaveCells(frame).frame is frame
     assert len(calls) == 2
@@ -668,7 +693,7 @@ def test_named_histories_match_footprint_input_and_cell_restart(tmp_path):
     ]
     run_waves(cells, DAY, end, destinations[0], series=SERIES)
     run_waves(
-        WaveFootprintSource(str(footprint_root)),
+        WaveFootprintSource(str(footprint_root), cell_source=cells),
         DAY,
         end,
         destinations[1],
@@ -680,7 +705,7 @@ def test_named_histories_match_footprint_input_and_cell_restart(tmp_path):
     )
     with pytest.raises(WaveRunnerError, match="restart input kind"):
         run_waves(
-            WaveFootprintSource(str(cell_root)),
+            WaveFootprintSource(str(cell_root), cell_source=cells),
             DAY,
             end,
             destinations[2],

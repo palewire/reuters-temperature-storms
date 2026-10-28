@@ -85,6 +85,8 @@ def test_run_selects_heat_and_explicit_empty_dates(tmp_path, monkeypatch):
             "run",
             "--wave-footprints",
             str(tmp_path),
+            "--wave-cells",
+            str(tmp_path.with_name(tmp_path.name + "-cells")),
             "--start-date",
             "1960-01-01",
             "--end-date",
@@ -128,6 +130,8 @@ def test_empty_declaration_must_be_inside_range(tmp_path):
             "run",
             "--wave-footprints",
             str(tmp_path),
+            "--wave-cells",
+            str(tmp_path.with_name(tmp_path.name + "-cells")),
             "--start-date",
             "1960-01-05",
             "--end-date",
@@ -224,6 +228,8 @@ def test_completed_cli_points_to_named_catalog(tmp_path, monkeypatch):
             "run",
             "--wave-footprints",
             str(tmp_path),
+            "--wave-cells",
+            str(tmp_path.with_name(tmp_path.name + "-cells")),
             "--start-date",
             "2024-01-01",
             "--end-date",
@@ -288,6 +294,8 @@ def test_progress_calls_only_named_events_storms(tmp_path, monkeypatch, series):
             "run",
             "--wave-footprints",
             str(tmp_path),
+            "--wave-cells",
+            str(tmp_path.with_name(tmp_path.name + "-cells")),
             "--series",
             series,
             "--start-date",
@@ -327,12 +335,14 @@ def test_run_selects_one_input_stage(tmp_path, monkeypatch, option):
     monkeypatch.setattr(
         cli, "run_waves", lambda source, *args, **kwargs: calls.append(source)
     )
+    inputs = ["--wave-cells", str(tmp_path.with_name(tmp_path.name + "-cells"))]
+    if option == "--wave-footprints":
+        inputs.extend([option, str(tmp_path)])
     result = CliRunner().invoke(
         main,
         [
             "run",
-            option,
-            str(tmp_path),
+            *inputs,
             "--start-date",
             "2024-01-01",
             "--end-date",
@@ -345,24 +355,22 @@ def test_run_selects_one_input_stage(tmp_path, monkeypatch, option):
     assert calls[0].kind == option.removeprefix("--")
 
 
-@pytest.mark.parametrize(
-    "options", [[], ["--wave-footprints", "one", "--wave-cells", "two"]]
-)
-def test_run_rejects_missing_or_ambiguous_input(options):
-    """Require exactly one input stage before opening files.
+@pytest.mark.parametrize("options", [[], ["--wave-footprints", "one"]])
+def test_run_requires_complete_daily_cell_input(options):
+    """Require complete daily cells before opening any inputs.
 
     Args:
-        options: Missing input options or both conflicting options.
+        options: Missing inputs or prepared footprints without their complete cells.
 
     Returns:
-        None. The CLI identifies the required exclusive choice.
+        None. The CLI identifies the missing complete daily cells.
 
     Examples:
-        Run ``pytest tests/test_cli.py -k ambiguous``.
+        Run ``pytest tests/test_cli.py -k complete_daily_cell``.
 
     Steps:
-        1. Require exactly one input stage before opening files.
-        2. Check that the CLI identifies the required exclusive choice.
+        1. Require complete daily cells before opening any inputs.
+        2. Check that the CLI identifies the missing native cell source.
     """
     result = CliRunner().invoke(
         main,
@@ -378,4 +386,4 @@ def test_run_rejects_missing_or_ambiguous_input(options):
         ],
     )
     assert result.exit_code == 2
-    assert "exactly one" in result.output
+    assert "--wave-cells" in result.output

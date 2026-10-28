@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from hashlib import md5
 from typing import TYPE_CHECKING
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 from pyproj import Transformer
 from shapely.geometry import box
 from shapely.ops import transform
 
 from reuters_temperature_storms import WaveCells
+from reuters_temperature_storms.identity import component_identity
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,7 +29,8 @@ def create_footprints(directory: Path) -> tuple[Path, ...]:
     """Write invented footprints showing movement, a split, a merge and an end.
 
     These boxes are synthetic tracking fixtures. They do not describe
-    observed temperatures or real waves. Every box is entirely qualifying;
+    observed temperatures or real waves. Their edges describe complete native
+    quarter-degree cells. Every box is entirely qualifying;
     grace and gap-filled areas are zero. The last date has an empty input file.
 
     Args:
@@ -47,21 +49,82 @@ def create_footprints(directory: Path) -> tuple[Path, ...]:
         3. Return the five file paths in chronological order.
     """
     days = (
-        (box(-25, -15, 15, 15),),
-        (box(-23, -15, 17, 15),),
-        (box(-23, -15, -4, 15), box(-2, -15, 17, 15)),
-        (box(-21, -15, 19, 15),),
+        (box(-25.125, -15.125, 14.875, 14.875),),
+        (box(-23.125, -15.125, 16.875, 14.875),),
+        (
+            box(-23.125, -15.125, -4.125, 14.875),
+            box(-2.125, -15.125, 16.875, 14.875),
+        ),
+        (box(-21.125, -15.125, 18.875, 14.875),),
         (),
     )
     target = directory / "t2m_max" / "positive"
     target.mkdir(parents=True, exist_ok=True)
+    cell_target = (
+        directory.with_name(f"{directory.name}-cells") / "t2m_max" / "positive"
+    )
+    cell_target.mkdir(parents=True, exist_ok=True)
     files = []
     for offset, shapes in enumerate(days):
         day = START_DATE + timedelta(days=offset)
         path = target / f"{day.isoformat()}.parquet"
         _footprint_frame(day, shapes).to_parquet(path, index=False)
+        WaveCells(_native_footprint_cells(day, shapes)).to_parquet(
+            cell_target / path.name
+        )
         files.append(path)
     return tuple(files)
+
+
+def _native_footprint_cells(day: date, shapes: tuple[Polygon, ...]) -> gpd.GeoDataFrame:
+    """Create the complete native-cell companion for invented rectangle footprints.
+
+    Args:
+        day: Calendar date represented by every synthetic cell.
+        shapes: Complete native rectangles from the test's footprint scene.
+
+    Returns:
+        Seven-column cell frame with all cells qualifying and no omitted gaps
+        or grace cells. An empty scene keeps the same stored column types.
+
+    Examples:
+        frame = _native_footprint_cells(START_DATE, (box(-0.125, -0.125, 0.875, 0.875),))
+    """
+    positions = [
+        (float(longitude), float(latitude))
+        for shape in shapes
+        for longitude in np.arange(shape.bounds[0] + 0.125, shape.bounds[2], 0.25)
+        for latitude in np.arange(shape.bounds[1] + 0.125, shape.bounds[3], 0.25)
+    ]
+    count = len(positions)
+    return gpd.GeoDataFrame(
+        {
+            "longitude": pd.Series(
+                [position[0] for position in positions], dtype="float64"
+            ),
+            "latitude": pd.Series(
+                [position[1] for position in positions], dtype="float64"
+            ),
+            "days": pd.Series([5.0] * count, dtype="float64"),
+            "grace_days": pd.Series([0.0] * count, dtype="float64"),
+            "gap_filled": pd.Series([False] * count, dtype="bool"),
+            "geometry": gpd.GeoSeries(
+                [
+                    box(
+                        longitude - 0.125,
+                        latitude - 0.125,
+                        longitude + 0.125,
+                        latitude + 0.125,
+                    )
+                    for longitude, latitude in positions
+                ],
+                crs=4326,
+            ),
+            "date": pd.Series([day] * count, dtype="datetime64[ns]"),
+        },
+        geometry="geometry",
+        crs=4326,
+    )
 
 
 def _footprint_frame(day: date, shapes: tuple[Polygon, ...]) -> gpd.GeoDataFrame:
@@ -87,9 +150,14 @@ def _footprint_frame(day: date, shapes: tuple[Polygon, ...]) -> gpd.GeoDataFrame
         float(transform(_AREA_TRANSFORMER.transform, shape).area / 1_000_000)
         for shape in shapes
     ]
-    # Daily footprint IDs use the date and complete WKT with its original order.
+    # Input constructors use the same physical-footprint identity as producers.
     ids = [
-        md5(f"{day} {shape.wkt}".encode(), usedforsecurity=False).hexdigest()
+        component_identity(
+            temperature="tasmax",
+            direction="warm",
+            date=np.datetime64(day, "D"),
+            geometry=shape,
+        )
         for shape in shapes
     ]
     return gpd.GeoDataFrame(

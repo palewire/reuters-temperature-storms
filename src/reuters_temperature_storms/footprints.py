@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, NamedTuple, Self, cast
@@ -21,6 +21,7 @@ from .components import (
     DailyWaveComponentGeometry,
 )
 from .footprint_geometry import WaveFootprintBuilder
+from .footprint_order import FootprintOrderError, HistoricalFootprintOrder
 from .identity import component_identity
 from .schemas import WaveFootprintSchema
 from .series import WaveSeries
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from fsspec.spec import AbstractFileSystem
     from shapely import Geometry
 
-    from .cells import WaveCells
+    from .cells import WaveCells, WaveCellSource
 
 
 class _FootprintRow(NamedTuple):
@@ -87,9 +88,10 @@ class FootprintError(ValueError):
 class WaveFootprints:
     """One validated daily footprint input table with its existing schema.
 
-    The input column ``storm_id`` is a daily footprint hash, exposed
-    internally as ``component_id``. Tracked outputs use the persistent
-    ``wave_id``, which stays the same when a wave becomes a named storm.
+    The input column ``storm_id`` identifies the stored row and any associated
+    cell records. Tracking derives its own ``component_id`` from the physical
+    coverage and retains that input label separately. Tracked outputs use the
+    persistent ``wave_id``, which stays the same when a wave becomes named.
 
     Steps:
         1. Keep the accepted daily table on the model without copying it.
@@ -101,7 +103,7 @@ class WaveFootprints:
 
     Examples:
         footprints = WaveFootprints.read_parquet("2026-08-31.parquet")
-        components = footprints.to_components(date(2026, 8, 31), series)
+        components = footprints.to_components(date(2026, 8, 31), series, native_cells=cells)
     """
 
     frame: gpd.GeoDataFrame
@@ -310,72 +312,151 @@ class WaveFootprints:
         else:
             filesystem.pipe_file(location, payload)
 
-    def to_components(
-        self, day: date, series: WaveSeries
-    ) -> tuple[ComponentMembership, ...]:
-        """Create tracker components from validated daily footprint rows.
-
-        Steps:
-            1. Require every footprint row to represent the requested date.
-            2. Sort rows by their stored daily footprint ID and assign labels in that order.
-            3. Recalculate each ID from the date and complete shape text and reject a mismatch.
-            4. Copy each role shape and measurement into the records used by the tracker.
+    def validate_day(self, day: date, series: WaveSeries) -> None:
+        """Check a stored footprint date without reconstructing naming order.
 
         Args:
             day: Expected plain calendar date.
-            series: Scientific series represented by the file.
+            series: Maximum/minimum and warm/cold scientific series.
 
         Returns:
-            Components sorted by stored footprint ID. Geometry bytes and scalar
-            values retain the supplied precision. Geometry area measurements and
-            containment checks remain the tracker's responsibility.
+            None. The accepted footprint schema, date and physical identities
+            remain usable for a preparation-stage check without opening cells.
 
         Raises:
-            FootprintError: If a date or component identity does not match the input.
+            FootprintError: If dates or physical identities disagree.
 
         Examples:
-            components = footprints.to_components(day, series)
+            footprints.validate_day(day, series)
         """
+        self._prepare_components(day, series)
+
+    def _prepare_components(
+        self, day: date, series: WaveSeries
+    ) -> tuple[tuple[str, _FootprintRow, DailyWaveComponentGeometry], ...]:
+        """Retain shapes and measurements while deriving daily physical IDs.
+
+        Args:
+            day: Expected plain calendar date.
+            series: Maximum/minimum and warm/cold scientific series.
+
+        Returns:
+            Input-ordered physical IDs, original rows and role records. This
+            preparation does not compute naming order or open cell files.
+
+        Raises:
+            FootprintError: If a row has a wrong date or physical IDs repeat.
+
+        Examples:
+            prepared = footprints._prepare_components(day, series)
+        """
+        if not isinstance(day, date) or isinstance(day, datetime):
+            raise FootprintError("day must be a plain calendar date")
+        if not isinstance(series, WaveSeries):
+            raise FootprintError("series must use tasmax/tasmin and warm/cold")
+        try:
+            series.validate()
+        except ValueError as error:
+            raise FootprintError(str(error)) from error
         frame = self.frame
         if not frame["date"].eq(pd.Timestamp(day)).all():
             msg = f"footprint dates must all equal midnight {day.isoformat()}"
             raise FootprintError(msg)
-        components = []
-        for label, values in enumerate(
-            frame.sort_values("storm_id").itertuples(index=False), 1
-        ):
+        prepared: list[tuple[str, _FootprintRow, DailyWaveComponentGeometry]] = []
+        for label, values in enumerate(frame.itertuples(index=False), 1):
             row = cast("_FootprintRow", values)
-            time = row.date.to_datetime64()
-            expected = component_identity(
+            identity = component_identity(
                 temperature=series.temperature,
                 direction=series.direction,
-                date=time,
+                date=row.date.to_datetime64(),
                 geometry=row.buffer_geometry,
             )
-            if row.storm_id != expected:
-                msg = "footprint storm_id must match its date and full geometry"
-                raise FootprintError(msg)
-            components.append(
-                ComponentMembership(
-                    component_id=row.storm_id,
-                    geometry=DailyWaveComponentGeometry(
-                        time=time,
-                        label=label,
-                        geometry=row.geometry,
-                        grace_geometry=row.grace_geometry,
-                        full_geometry=row.buffer_geometry,
-                        area_qualified=float(row.area_qualified),
-                        area_grace=float(row.area_grace),
-                        area_gap_filled=float(row.area_gap_filled),
-                        qualified_fraction=float(row.qualified_fraction),
-                    ),
-                )
+            roles = DailyWaveComponentGeometry(
+                time=row.date.to_datetime64(),
+                label=label,
+                geometry=row.geometry,
+                grace_geometry=row.grace_geometry,
+                full_geometry=row.buffer_geometry,
+                area_qualified=float(row.area_qualified),
+                area_grace=float(row.area_grace),
+                area_gap_filled=float(row.area_gap_filled),
+                qualified_fraction=float(row.qualified_fraction),
             )
-        return tuple(components)
+            prepared.append((identity, row, roles))
+        if len({identity for identity, _, _ in prepared}) != len(prepared):
+            raise FootprintError("footprints must have unique physical coverage")
+        return tuple(prepared)
+
+    def to_components(
+        self, day: date, series: WaveSeries, *, native_cells: WaveCells
+    ) -> tuple[ComponentMembership, ...]:
+        """Create tracker components from footprints and complete native cells.
+
+        Steps:
+            1. Require every footprint row to represent the requested date.
+            2. Derive date-and-first-cell identities from the complete footprints.
+            3. Rebuild all historical ordering digests together from the day's
+               complete native cell roles, retaining the original labels separately.
+            4. Sort the ordering digests and assign daily component numbers.
+               Keep the permanent identities, shapes and measurements unchanged.
+
+        Args:
+            day: Expected plain calendar date.
+            series: Scientific series represented by the file.
+            native_cells: Complete accepted native cells for the whole date,
+                including gap-filled cells outside retained footprints.
+
+        Returns:
+            Components sorted by historical footprint digest. Geometry bytes and scalar
+            values retain the supplied precision. Geometry area measurements and
+            containment checks remain the tracker's responsibility.
+
+        Raises:
+            FootprintError: If a date is wrong, identities or ordering digests
+                repeat, or supplied shapes cannot represent complete native cells.
+
+        Examples:
+            components = footprints.to_components(day, series, native_cells=cells)
+        """
+        prepared = self._prepare_components(day, series)
+        try:
+            # The original day-wide grouping affects how equal-size pieces are
+            # ordered at the date line. Rebuild the complete input date once;
+            # a storm's isolated shape does not contain that surrounding context.
+            order_digests = HistoricalFootprintOrder.for_day(
+                pd.Timestamp(day).to_datetime64(),
+                tuple(roles for _, _, roles in prepared),
+                native_cells=native_cells,
+            )
+        except FootprintOrderError as error:
+            raise FootprintError(
+                f"cannot compute historical ordering for {day.isoformat()}: {error}"
+            ) from error
+        components = [
+            ComponentMembership(
+                component_id=identity,
+                order_digest=order_digest,
+                input_id=row.storm_id,
+                geometry=roles,
+            )
+            for (identity, row, roles), order_digest in zip(
+                prepared, order_digests, strict=True
+            )
+        ]
+        if len({component.order_digest for component in components}) != len(components):
+            raise FootprintError(
+                "footprints must have unique historical ordering digests"
+            )
+        return tuple(
+            replace(component, geometry=replace(component.geometry, label=label))
+            for label, component in enumerate(
+                sorted(components, key=lambda component: component.order_digest), 1
+            )
+        )
 
 
 class WaveFootprintSource(DailyFileSource):
-    """Read prepared footprint summaries using caller-selected file access.
+    """Read prepared footprints with their explicit complete native-cell source.
 
     Steps:
         1. Configure the caller-selected file location and access options.
@@ -385,13 +466,49 @@ class WaveFootprintSource(DailyFileSource):
         location: Local directory or fsspec URL for the daily files.
         storage_options: Caller-selected filesystem access settings.
         known_empty_dates: Explicit dates permitted to have missing empty files.
+        cell_source: Complete native-cell source required for tracking reads.
+            None permits listing, writing and direct footprint schema checks.
 
     Examples:
-        components = WaveFootprintSource("./footprints").read(day, series)
+        source = WaveFootprintSource("./footprints", cell_source=WaveCellSource("./cells"))
+        components = source.read(day, series)
     """
 
-    __slots__ = ()
+    __slots__ = ("cell_source",)
     error_type = FootprintError
+
+    def __init__(
+        self,
+        location: str,
+        storage_options: dict[str, object] | None = None,
+        *,
+        known_empty_dates: tuple[date, ...] = (),
+        cell_source: WaveCellSource | None = None,
+    ) -> None:
+        """Keep prepared shapes and complete native cells at explicit locations.
+
+        Args:
+            location: Prepared footprint directory or filesystem URL.
+            storage_options: Caller-selected access options for footprint files.
+            known_empty_dates: Explicit dates allowed to lack empty footprint files.
+            cell_source: Native-cell reader used when producing tracker components.
+                None allows listing and writing without starting tracking.
+
+        Returns:
+            None. Stores the configured readers without opening daily files.
+
+        Raises:
+            FootprintError: If dates, locations or the companion reader are invalid.
+
+        Examples:
+            source = WaveFootprintSource("./footprints", cell_source=WaveCellSource("./cells"))
+        """
+        from .cells import WaveCellSource
+
+        if cell_source is not None and not isinstance(cell_source, WaveCellSource):
+            raise FootprintError("cell_source must be a WaveCellSource")
+        super().__init__(location, storage_options, known_empty_dates=known_empty_dates)
+        self.cell_source = cell_source
 
     def read(self, day: date, series: WaveSeries) -> tuple[ComponentMembership, ...]:
         """Read one date and series while retaining the exact stored shapes.
@@ -400,31 +517,51 @@ class WaveFootprintSource(DailyFileSource):
             1. Choose the file for the requested day and temperature/direction series.
             2. Read and check its footprint table through WaveFootprints.
             3. Allow a missing file only when the caller explicitly declared that day empty.
-            4. Reject rows on a declared empty date, then return the daily tracker records.
+            4. Reject rows on a declared empty date and read the complete native
+               cells from the configured companion source.
+            5. Compute all ordering digests together, preserving stored shapes.
 
         Args:
             day: Date of the input file.
             series: Maximum/minimum and warm/cold wave series.
 
         Returns:
-            Daily components with stored role shapes and areas, without cell
-            membership. A declared missing empty date returns an empty tuple.
+            Daily components with stored role shapes, areas and ordering digests.
+            A declared missing empty date returns an empty tuple only after its
+            native-cell context agrees.
 
         Raises:
             FileNotFoundError: If an undeclared daily input is missing.
-            FootprintError: If metadata, dates, shapes or scalars are invalid.
+            FootprintError: If the companion source is absent, footprint fields
+                are invalid, or complete native cells disagree with stored roles.
+            WaveCellError: If the companion cell data is invalid.
 
         Examples:
             components = source.read(date(2026, 8, 31), series)
         """
         path = self.path_for(day, series)
+        if self.cell_source is None:
+            raise FootprintError(
+                "prepared footprint tracking requires a complete native cell_source"
+            )
         try:
             footprints = WaveFootprints.read_parquet(path, filesystem=self._filesystem)
         except FileNotFoundError:
             if day in self.known_empty_dates:
+                native_cells = self.cell_source.read_cells(day, series)
+                try:
+                    HistoricalFootprintOrder.for_day(
+                        pd.Timestamp(day).to_datetime64(), (), native_cells=native_cells
+                    )
+                except FootprintOrderError as error:
+                    raise FootprintError(
+                        f"declared empty footprint date {day} has inconsistent native cells: {error}"
+                    ) from error
                 return ()
             raise
         if day in self.known_empty_dates and not footprints.frame.empty:
             msg = f"{path}: declared empty date contains footprint rows"
             raise FootprintError(msg)
-        return footprints.to_components(day, series)
+        return footprints.to_components(
+            day, series, native_cells=self.cell_source.read_cells(day, series)
+        )
