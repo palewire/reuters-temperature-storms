@@ -10,7 +10,15 @@ import numpy as np
 import pandas as pd
 import pytest
 import shapely
-from shapely.geometry import MultiPolygon, Polygon, box
+from shapely.geometry import (
+    GeometryCollection,
+    LineString,
+    MultiLineString,
+    MultiPolygon,
+    Point,
+    Polygon,
+    box,
+)
 
 from reuters_temperature_storms.cells import WaveCells
 from reuters_temperature_storms.components import DailyWaveComponentGeometry
@@ -18,6 +26,7 @@ from reuters_temperature_storms.footprint_order import (
     FootprintOrderError,
     HistoricalFootprintOrder,
     _HistoricalComparisonSort,
+    _HistoricalPolygonUnion,
     _NativeRoleCells,
 )
 
@@ -631,3 +640,214 @@ def test_repeated_native_cell_is_rejected_after_validation() -> None:
     cells.frame.loc[1, "geometry"] = cells.frame.geometry.iloc[0]
     with pytest.raises(FootprintOrderError, match="must not repeat a native cell half"):
         HistoricalFootprintOrder.for_day(DAY, roles, cells)
+
+
+def test_native_polygon_collection_keeps_same_operands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Collect native polygon arrays without inspecting every shape in Python.
+
+    Args:
+        monkeypatch: Pytest helper disabling the recursive walk for this flat input.
+
+    Returns:
+        None after collection retains each original object and its polygon bytes.
+        Empty and missing positions add no operand.
+
+    Examples:
+        Run ``pytest tests/test_footprint_order.py -k native_polygon_collection``.
+    """
+    first = _turn_ring(box(-0.125, -0.125, 0.125, 0.125))
+    second = box(4.875, -0.125, 5.125, 0.125)
+    third = _turn_ring(box(9.875, -0.125, 10.125, 0.125))
+    values = np.asarray([first, None, Polygon(), second, third], dtype=object)
+
+    def unexpected_walk(*_args: object) -> None:
+        """Reject scalar inspection for a flat array of native polygon operands.
+
+        Args:
+            *_args: Unexpected recursive collection arguments.
+
+        Returns:
+            None. Always raises when called.
+
+        Raises:
+            AssertionError: If collecting native polygons repeats scalar inspection.
+
+        Examples:
+            unexpected_walk(first)
+        """
+        raise AssertionError("Native polygons must be collected together.")
+
+    monkeypatch.setattr(_HistoricalPolygonUnion, "parts", unexpected_walk)
+    collected = _HistoricalPolygonUnion._collect_parts(values)
+    expected = (first, second, third)
+    assert tuple(shape.wkb for shape in collected) == tuple(
+        shape.wkb for shape in expected
+    )
+    assert all(
+        actual is source for actual, source in zip(collected, expected, strict=True)
+    )
+    assert values[0] is first
+    assert values[3] is second
+    assert values[4] is third
+
+
+def test_flat_mixed_collection_preserves_stored_polygon_bytes() -> None:
+    """Split flat multipart inputs while preserving input and stored polygon order.
+
+    Args:
+        None.
+
+    Returns:
+        None after mixed inputs keep the same polygon byte sequence and omit
+        line-only, point-only, empty and missing coverage.
+
+    Examples:
+        Run ``pytest tests/test_footprint_order.py -k flat_mixed_collection``.
+    """
+    polygons = [
+        _turn_ring(box(index, 0.0, index + 0.25, 0.25))
+        for index in (5.0, 1.0, 9.0, 3.0)
+    ]
+    values = [
+        None,
+        Polygon(),
+        polygons[0],
+        Point(0.0, 0.0),
+        MultiPolygon([polygons[1], polygons[2]]),
+        LineString([(0.0, 0.0), (1.0, 1.0)]),
+        GeometryCollection([Point(), polygons[3]]),
+        MultiLineString([[(0.0, 1.0), (1.0, 0.0)]]),
+        GeometryCollection(),
+    ]
+    expected = tuple(shape.wkb for shape in polygons)
+    assert (
+        tuple(shape.wkb for shape in _HistoricalPolygonUnion._collect_parts(values))
+        == expected
+    )
+    assert (
+        tuple(
+            shape.wkb for shape in _HistoricalPolygonUnion._collect_parts(iter(values))
+        )
+        == expected
+    )
+
+
+def test_nested_collection_preserves_original_depth_first_polygon_order() -> None:
+    """Walk nested collections at their original position without reordering parts.
+
+    Args:
+        None.
+
+    Returns:
+        None after nested multipart and collection children produce the exact
+        expected depth-first sequence of unchanged polygon bytes.
+
+    Examples:
+        Run ``pytest tests/test_footprint_order.py -k nested_collection``.
+    """
+    polygons = [
+        _turn_ring(box(index, 0.0, index + 0.25, 0.25))
+        for index in (9.0, 5.0, 1.0, 7.0, 3.0, 11.0)
+    ]
+    values = (
+        polygons[0],
+        GeometryCollection(
+            [
+                Point(0.0, 0.0),
+                MultiPolygon([polygons[1], polygons[2]]),
+                GeometryCollection(
+                    [
+                        LineString([(0.0, 0.0), (1.0, 1.0)]),
+                        polygons[3],
+                        GeometryCollection([polygons[4], Polygon()]),
+                    ]
+                ),
+            ]
+        ),
+        None,
+        polygons[5],
+    )
+    assert tuple(
+        shape.wkb for shape in _HistoricalPolygonUnion._collect_parts(values)
+    ) == tuple(shape.wkb for shape in polygons)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [],
+        (),
+        np.asarray([], dtype=object),
+        [None, None],
+        [Polygon(), MultiPolygon(), GeometryCollection()],
+        [Point(0.0, 0.0), LineString([(0.0, 0.0), (1.0, 1.0)])],
+        [GeometryCollection([Point(), GeometryCollection([Polygon()])])],
+    ],
+)
+def test_polygon_collection_without_present_coverage_returns_none(
+    values: object,
+) -> None:
+    """Keep empty, missing and nonpolygon inputs out of the union operands.
+
+    Args:
+        values: Input sequence without any present polygon coverage.
+
+    Returns:
+        None after collection is empty and joining produces no polygon shape.
+
+    Examples:
+        Run ``pytest tests/test_footprint_order.py -k without_present_coverage``.
+    """
+    assert _HistoricalPolygonUnion._collect_parts(values) == []
+    assert _HistoricalPolygonUnion.join(values) is None
+
+
+def test_batch_collection_and_scalar_walk_give_identical_union_bytes() -> None:
+    """Keep the original scalar collection's exact final polygon encoding.
+
+    Args:
+        None.
+
+    Returns:
+        None after mixed and nested inputs give the same operands and union
+        bytes as the unchanged original recursive collection method.
+
+    Examples:
+        Run ``pytest tests/test_footprint_order.py -k identical_union_bytes``.
+    """
+    polygons = [
+        _turn_ring(box(index / 4, row / 4, index / 4 + 0.25, row / 4 + 0.25))
+        for index in range(8)
+        for row in range(4)
+    ]
+    values = [
+        polygons[0],
+        MultiPolygon(polygons[1:12]),
+        GeometryCollection(
+            [
+                GeometryCollection(polygons[12:20]),
+                MultiPolygon(polygons[20:25]),
+                Point(0.0, 0.0),
+            ]
+        ),
+        *polygons[25:],
+        None,
+        Polygon(),
+    ]
+    original_parts = [
+        part
+        for shape in values
+        if shape is not None
+        for part in _HistoricalPolygonUnion.parts(shape)
+    ]
+    collected = _HistoricalPolygonUnion._collect_parts(values)
+    assert tuple(shape.wkb for shape in collected) == tuple(
+        shape.wkb for shape in original_parts
+    )
+    expected = _HistoricalPolygonUnion.join(original_parts)
+    actual = _HistoricalPolygonUnion.join(values)
+    assert actual is not None
+    assert expected is not None
+    assert actual.wkb == expected.wkb

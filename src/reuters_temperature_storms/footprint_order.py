@@ -531,12 +531,7 @@ class _HistoricalPolygonUnion:
         Examples:
             qualified = _HistoricalPolygonUnion.join(qualified_cells)
         """
-        polygons = [
-            part
-            for geometry in geometries
-            if geometry is not None
-            for part in cls.parts(geometry)
-        ]
+        polygons = cls._collect_parts(geometries)
         if not polygons:
             return None
         order = list(range(len(polygons)))
@@ -554,6 +549,57 @@ class _HistoricalPolygonUnion:
             for start in range(0, len(polygons), per_strip):
                 sorter.sort(start, min(start + per_strip, len(polygons)))
         return cls._combine(polygons, order, 0, len(order))
+
+    @classmethod
+    def _collect_parts(cls, geometries: Iterable[Geometry | None]) -> list[Geometry]:
+        """Collect polygon parts together without changing their order or bytes.
+
+        Args:
+            geometries: Shapes in their supplied order, possibly including
+                missing roles, empty shapes and nested collections.
+
+        Returns:
+            Present polygon parts in original input and stored part order.
+            Native polygon arrays retain the exact supplied shape objects.
+            Nonpolygon pieces add no coverage and are omitted.
+
+        Examples:
+            polygons = _HistoricalPolygonUnion._collect_parts([west, None, east])
+        """
+        values = np.asarray(
+            geometries if isinstance(geometries, np.ndarray) else list(geometries),
+            dtype=object,
+        )
+        type_ids = shapely.get_type_id(values)
+        polygon_type = shapely.GeometryType.POLYGON
+        # Native cells already contain single polygons. Check their types and
+        # emptiness together, keeping the original objects instead of asking
+        # Python to inspect and wrap every rectangle separately.
+        if np.all((type_ids == polygon_type) | (type_ids == -1)):
+            present = (type_ids == polygon_type) & ~shapely.is_empty(values)
+            return cast("list[Geometry]", values[present].tolist())
+
+        # One batch splits ordinary multipart shapes in their stored order.
+        # It leaves nested collections intact so the existing recursive walk
+        # can expand only those less common children at their original position.
+        pieces = shapely.get_parts(values)
+        type_ids = shapely.get_type_id(pieces)
+        present = ~shapely.is_empty(pieces)
+        nested = (type_ids == shapely.GeometryType.MULTIPOLYGON) | (
+            type_ids == shapely.GeometryType.GEOMETRYCOLLECTION
+        )
+        if not np.any(nested & present):
+            return cast(
+                "list[Geometry]", pieces[(type_ids == polygon_type) & present].tolist()
+            )
+        polygons = []
+        for position in np.flatnonzero(present & ((type_ids == polygon_type) | nested)):
+            piece = pieces[position]
+            if type_ids[position] == polygon_type:
+                polygons.append(piece)
+            else:
+                polygons.extend(cls.parts(piece))
+        return polygons
 
     @classmethod
     def _combine(
