@@ -362,7 +362,7 @@ def test_duplicate_ids_are_rejected(tmp_path):
 @pytest.mark.parametrize(
     ("name", "value", "message"),
     [
-        ("storm_id", "0" * 32, "date and full geometry"),
+        ("storm_id", "0" * 31, "storm_id"),
         ("storm_id", "Z" * 32, "storm_id"),
         ("date", date(2026, 8, 30), "dates must all equal"),
         ("geometry", b"broken", "WKB"),
@@ -626,27 +626,28 @@ def test_row_groups_preserve_scalars_and_sorted_components(tmp_path):
         tmp_path: Directory for a synthetic footprint file.
 
     Returns:
-        None. The reader retains WKB and float values and assigns labels in
-        ascending supplied footprint ID order across all stored row groups.
+        None. The reader retains WKB, input labels and float values while
+        assigning component numbers in canonical daily-ID order.
 
     Examples:
         pytest tests/test_footprints.py -k chunked_rows
 
     Steps:
         1. Read unsorted row groups with optional nulls and original scalar precision.
-        2. Check that the reader retains WKB and float values and assigns labels in ascending supplied footprint ID order across all stored row groups.
+        2. Replace the input labels independently of the canonical identities.
+        3. Check stable component order, original labels and exact physical values.
     """
     tables = [_table(box(i, 0, i + 1, 1)) for i in range(3)]
     table = pa.concat_tables(tables)
+    daily_ids = table["storm_id"].to_pylist()
+    table = _replace(table, "storm_id", [f"{index:032x}" for index in range(3)])
     for name in ("storm_id",):
         index = table.schema.get_field_index(name)
         table = table.set_column(index, name, table[name].cast(pa.large_string()))
     for name in ("geometry", "grace_geometry", "buffer_geometry"):
         index = table.schema.get_field_index(name)
         table = table.set_column(index, name, table[name].cast(pa.large_binary()))
-    ordered_indices = sorted(
-        range(table.num_rows), key=lambda index: table["storm_id"][index].as_py()
-    )
+    ordered_indices = sorted(range(table.num_rows), key=lambda index: daily_ids[index])
     shuffled = table.take(pa.array(list(reversed(ordered_indices))))
     path = _write(tmp_path, shuffled)
     pq.write_table(shuffled, path, row_group_size=1)
@@ -654,7 +655,8 @@ def test_row_groups_preserve_scalars_and_sorted_components(tmp_path):
     for label, (component, index) in enumerate(
         zip(components, ordered_indices, strict=True), 1
     ):
-        assert component.component_id == table["storm_id"][index].as_py()
+        assert component.component_id == daily_ids[index]
+        assert component.input_id == table["storm_id"][index].as_py()
         geometry = component.geometry
         assert geometry.label == label
         assert geometry.geometry.wkb == table["geometry"][index].as_py()

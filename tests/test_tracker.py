@@ -36,6 +36,9 @@ _SERIES = WaveSeries("tasmax", "warm")
 _AREA_TRANSFORMER = Transformer.from_crs("EPSG:4326", "EPSG:6933", always_xy=True)
 
 
+pytestmark = pytest.mark.usefixtures("synthetic_name_history")
+
+
 def _component(
     day: date,
     label: int,
@@ -720,8 +723,8 @@ def test_saved_batch_encoding_stays_exact_without_extra_validation(choice, monke
     assert calls == []
 
 
-def test_existing_saved_batches_keep_exact_bytes():
-    """Read pre-refactor saved records and reproduce their JSON and WKB bytes.
+def test_saved_batches_keep_exact_bytes():
+    """Read saved full-digest records and reproduce their JSON and WKB bytes.
 
     Args:
         None.
@@ -730,7 +733,7 @@ def test_existing_saved_batches_keep_exact_bytes():
         None. Verifies named records, split edges, mergers and explicit endings.
 
     Examples:
-        Run pytest tests/test_tracker.py -k existing_saved_batches.
+        Run pytest tests/test_tracker.py -k saved_batches_keep_exact_bytes.
 
     Steps:
         1. Load the saved fixture batch documents and construct the matching checkpoint.
@@ -751,6 +754,92 @@ def test_existing_saved_batches_keep_exact_bytes():
         original = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
         restored = WaveTrackingBatch.from_bytes(original, checkpoint)
         assert restored.to_bytes() == original
+
+
+@pytest.mark.unit
+def test_input_labels_do_not_change_saved_state_or_resumed_endings() -> None:
+    """Resume scientific state after temporary input-row labels are omitted.
+
+    Args:
+        None.
+
+    Returns:
+        None. Direct and resumed records have equal scientific bytes, including
+        names and explicit endings, while today's input labels remain available.
+
+    Examples:
+        Run pytest tests/test_tracker.py -k input_labels_do_not_change.
+
+    Steps:
+        1. Track labelled input and restore its checkpoint without those labels.
+        2. Continue both trackers with the next labelled component.
+        3. Restore the continued state and compare direct and resumed endings.
+    """
+    first = _batch(_START, (replace(_component(_START, 1), input_id="1" * 32),))
+    direct = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="footprints"
+    )
+    opening = direct.advance(first)
+    saved = opening.checkpoint.to_bytes()
+    assert "input_id" not in json.loads(saved)["active"][0]["component"]
+    restored = WaveTrackerCheckpoint.from_bytes(saved)
+    assert restored.active[0].component.input_id is None
+    resumed = WaveTracker(
+        series=_SERIES,
+        requested_start=_START + timedelta(days=1),
+        source_identity="footprints",
+        prior_checkpoint=restored,
+    )
+    next_day = _START + timedelta(days=1)
+    second = _batch(next_day, (replace(_component(next_day, 1), input_id="2" * 32),))
+    continued = direct.advance(second)
+    resumed_continuation = resumed.advance(second)
+    assert resumed_continuation.to_bytes() == continued.to_bytes()
+    assert resumed_continuation.current[0].component.input_id == "2" * 32
+    assert continued.current[0].wave_id == opening.current[0].wave_id
+    assert continued.current[0].name == opening.current[0].name
+    ending_tracker = WaveTracker(
+        series=_SERIES,
+        requested_start=_START + timedelta(days=2),
+        source_identity="footprints",
+        prior_checkpoint=WaveTrackerCheckpoint.from_bytes(
+            continued.checkpoint.to_bytes()
+        ),
+    )
+    empty = _batch(_START + timedelta(days=2), ())
+    direct_ending = direct.advance(empty)
+    resumed_ending = ending_tracker.advance(empty)
+    assert resumed_ending.to_bytes() == direct_ending.to_bytes()
+    assert direct_ending.ended[0].final_record.component.input_id == "2" * 32
+    assert resumed_ending.ended[0].final_record.component.input_id is None
+
+
+@pytest.mark.unit
+def test_checkpoint_rejects_shortened_permanent_identity() -> None:
+    """Reject an old shortened key before it can continue under the shared rule.
+
+    Args:
+        None.
+
+    Returns:
+        None. Restoring the shortened active key raises the checkpoint error.
+
+    Examples:
+        Run pytest tests/test_tracker.py -k shortened_permanent_identity.
+
+    Steps:
+        1. Create valid full-digest tracker state.
+        2. Replace its permanent key with the former eight-character suffix.
+        3. Require checkpoint restoration to reject the changed state.
+    """
+    tracker = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="footprints"
+    )
+    tracker.advance(_batch(_START, (_component(_START, 1),)))
+    document = json.loads(tracker.checkpoint_bytes())
+    document["active"][0]["wave_id"] = document["active"][0]["wave_id"][:17]
+    with pytest.raises(WaveTrackerError, match="previous wave IDs"):
+        WaveTrackerCheckpoint.from_bytes(json.dumps(document).encode())
 
 
 @pytest.mark.parametrize(

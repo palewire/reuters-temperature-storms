@@ -2,7 +2,6 @@
 
 import json
 from datetime import date
-from hashlib import md5
 from pathlib import Path
 
 import geopandas as gpd
@@ -87,8 +86,8 @@ def test_regression_reference_geometry_and_measurements(case, shuffle_seed):
     Returns:
         None; asserts exact IDs and geometry bytes for the compact scenes.
         World-width geometry is checked physically because raw union ordering
-        differs across platforms; its bytes and IDs must remain stable when
-        shuffled within the same runtime.
+        differs across platforms; its bytes remain stable when shuffled within
+        the same runtime, while its fixed cell-based ID is independent of them.
 
     Examples:
         Run ``pytest tests/test_wave_footprint_reference.py``.
@@ -103,19 +102,10 @@ def test_regression_reference_geometry_and_measurements(case, shuffle_seed):
         shuffled, day, WaveSeries.parse(REFERENCE["series"])
     ).frame
     assert len(frame) == len(case["expected"])
-    for (_, actual), expected in zip(frame.iterrows(), case["expected"], strict=True):
-        if "storm_id" in expected:
-            assert actual["storm_id"] == expected["storm_id"]
-        else:
-            baseline = WaveFootprints.from_cells(
-                cells, day, WaveSeries.parse(REFERENCE["series"])
-            ).frame.iloc[0]
-            assert actual["storm_id"] == baseline["storm_id"]
-            raw_hash = md5(
-                f"{day.isoformat()} {actual['buffer_geometry'].wkt}".encode(),
-                usedforsecurity=False,
-            ).hexdigest()
-            assert actual["storm_id"] == raw_hash
+    for position, expected in enumerate(case["expected"]):
+        actual = frame.iloc[position]
+        assert actual["storm_id"] == expected["storm_id"]
+        baseline = None
         assert actual["date"] == pd.Timestamp(day)
         for column in (
             "area_qualified",
@@ -135,4 +125,8 @@ def test_regression_reference_geometry_and_measurements(case, shuffle_seed):
                 assert geometry.wkb.hex() == shape["wkb_hex"]
             else:
                 assert geometry.equals(from_wkt(shape["wkt"]))
+                if baseline is None:
+                    baseline = WaveFootprints.from_cells(
+                        cells, day, WaveSeries.parse(REFERENCE["series"])
+                    ).frame.iloc[position]
                 assert geometry.wkb == baseline[column].wkb

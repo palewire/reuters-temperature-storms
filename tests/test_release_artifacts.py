@@ -30,9 +30,16 @@ def artifacts(tmp_path):
     """
     csv_path = "reuters_temperature_storms/data/names_library.csv"
     csv_bytes = (Path(__file__).parents[1] / "src" / csv_path).read_bytes()
-    wheel_members = {csv_path: csv_bytes, "reuters_temperature_storms/py.typed": b""}
+    published_path = "reuters_temperature_storms/data/published_storm_names.csv"
+    published_bytes = (Path(__file__).parents[1] / "src" / published_path).read_bytes()
+    wheel_members = {
+        csv_path: csv_bytes,
+        published_path: published_bytes,
+        "reuters_temperature_storms/py.typed": b"",
+    }
     sdist_members = {
         f"release/src/{csv_path}": csv_bytes,
+        f"release/src/{published_path}": published_bytes,
         "release/src/reuters_temperature_storms/py.typed": b"",
     }
 
@@ -86,6 +93,56 @@ def test_valid_assets_pass(artifacts):
         Run ``pytest tests/test_release_artifacts.py -k valid_assets_pass``.
     """
     check_artifacts(artifacts[0])
+
+
+@pytest.mark.parametrize("kind", ["wheel", "sdist"])
+def test_missing_published_assignments_rejected(artifacts, kind):
+    """Reject a release that omits the issued labels needed for replay.
+
+    Args:
+        artifacts: Archive directory, writer and original member mappings.
+        kind: Distribution format whose published assignments are removed.
+
+    Returns:
+        None.
+
+    Examples:
+        Run ``pytest tests/test_release_artifacts.py -k missing_published``.
+    """
+    directory, write, wheel, sdist = artifacts
+    changed = {
+        name: contents
+        for name, contents in (wheel if kind == "wheel" else sdist).items()
+        if not name.endswith("published_storm_names.csv")
+    }
+    write(**{kind: changed})
+    with pytest.raises(click.ClickException, match="missing the published assignments"):
+        check_artifacts(directory)
+
+
+@pytest.mark.parametrize("kind", ["wheel", "sdist"])
+def test_changed_published_assignments_rejected(artifacts, kind):
+    """Reject a release that changes an issued label during packaging.
+
+    Args:
+        artifacts: Archive directory, writer and original member mappings.
+        kind: Distribution format whose issued labels are changed.
+
+    Returns:
+        None.
+
+    Examples:
+        Run ``pytest tests/test_release_artifacts.py -k changed_published``.
+    """
+    directory, write, wheel, sdist = artifacts
+    changed = dict(wheel if kind == "wheel" else sdist)
+    member = next(
+        name for name in changed if name.endswith("published_storm_names.csv")
+    )
+    changed[member] = changed[member].replace(b"Uriel 1960", b"Wrong 1960", 1)
+    write(**{kind: changed})
+    with pytest.raises(click.ClickException, match="published assignments CSV differs"):
+        check_artifacts(directory)
 
 
 @pytest.mark.parametrize("artifact", ["release.whl", "release.tar.gz"])

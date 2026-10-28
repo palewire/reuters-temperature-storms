@@ -203,13 +203,13 @@ def test_existing_valid_output_skips_without_reopening_source(tmp_path):
     assert second.bytes == first.bytes
 
 
-@pytest.mark.parametrize("mutation", ["corrupt", "identity", "date"])
+@pytest.mark.parametrize("mutation", ["corrupt", "label", "date"])
 def test_invalid_existing_file_is_refused_until_forced(tmp_path, mutation):
     """Check existing output data before treating a date as finished.
 
     Args:
         tmp_path: Source and output roots.
-        mutation: Corruption, wrong identity or wrong represented date.
+        mutation: Corruption, a malformed input label or wrong represented date.
 
     Returns:
         None. Invalid files raise a dated error and explicit force replaces them.
@@ -231,8 +231,8 @@ def test_invalid_existing_file_is_refused_until_forced(tmp_path, mutation):
             stream.write(b"broken parquet")
     else:
         frame = gpd.read_parquet(path)
-        if mutation == "identity":
-            frame["storm_id"] = "0" * 32
+        if mutation == "label":
+            frame["storm_id"] = "invalid-input-label"
         else:
             frame["date"] = pd.Timestamp(DAY + timedelta(days=1))
         frame.to_parquet(path, index=False)
@@ -246,6 +246,39 @@ def test_invalid_existing_file_is_refused_until_forced(tmp_path, mutation):
     assert not result.skipped
     assert len(output.read(DAY, SERIES)) == 1
     assert output._filesystem.cat(path) != corrupted_bytes
+
+
+def test_existing_file_preserves_valid_supplied_input_labels(tmp_path: Path) -> None:
+    """Keep accepted input labels when finished footprint files are reused.
+
+    Args:
+        tmp_path: Independent local source and output roots supplied by pytest.
+
+    Returns:
+        None. Reusing a valid file preserves its supplied labels and exact bytes.
+
+    Examples:
+        Run pytest tests/test_footprint_stage.py -k supplied_input_labels.
+
+    Steps:
+        1. Write a complete daily footprint and give it a valid supplied label.
+        2. Remove its source cells to prove reuse needs no reconstruction.
+        3. Check that reuse preserves the accepted output file unchanged.
+    """
+    source = _write_inputs(tmp_path / "cells", count=1)
+    output = WaveFootprintSource(str(tmp_path / "output"))
+    stage = FootprintRun(source, output, DAY, DAY, SERIES, max_workers=1)
+    stage.run()
+    path = output.path_for(DAY, SERIES)
+    frame = gpd.read_parquet(path)
+    frame["storm_id"] = "a" * 32
+    frame.to_parquet(path, index=False)
+    saved = output._filesystem.cat(path)
+    source._filesystem.rm(source.path_for(DAY, SERIES))
+    (result,) = stage.run()
+    assert result.skipped
+    assert output._filesystem.cat(path) == saved
+    assert [component.input_id for component in output.read(DAY, SERIES)] == ["a" * 32]
 
 
 def test_declared_missing_empty_day_creates_explicit_empty_parquet(tmp_path):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from numbers import Real
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import geopandas as gpd
 import numpy as np
@@ -19,7 +19,14 @@ from .components import (
     DailyWaveComponentGeometry,
     _relative_difference,
 )
-from .identity import birth_wave_identity, component_identity
+from .identity import (
+    WAVE_ID_PATTERN,
+    CellIdentity,
+    FootprintIdentity,
+    IdentityError,
+    birth_wave_identity,
+    component_identity,
+)
 from .series import WaveSeries
 
 if TYPE_CHECKING:
@@ -48,6 +55,24 @@ class TrackedWaveComponent:
 
     ``component_id`` identifies the footprint on this date. ``wave_id`` stays
     with the wave throughout its history and is used by catalog and lineage.
+
+    Args:
+        series: Maximum or minimum temperatures and warm or cold events.
+        component: Today's complete footprint and its measurements.
+        component_id: Date-and-cell identity for today's footprint.
+        wave_id: Permanent identity minted when this wave began.
+        start_date: Calendar day on which this wave began.
+        birth_cell_id: First occupied cell in the complete birth footprint,
+            retained unchanged throughout this wave's history.
+        peak_qualified_area: Largest qualified area observed so far.
+        peak_date: First date of that largest area.
+        continues: Whether today's footprint kept an earlier wave identity.
+        overlap_percent: Share of the preceding footprint covered today.
+        parent_wave_ids: Earlier identities contributing to a split or merger.
+        name: Issued name, or None until the wave qualifies for one.
+
+    Examples:
+        ``record.birth_cell_id`` stays fixed when ``record.component`` moves.
     """
 
     series: WaveSeries
@@ -55,6 +80,7 @@ class TrackedWaveComponent:
     component_id: str
     wave_id: str
     start_date: np.datetime64
+    birth_cell_id: int
     peak_qualified_area: float
     peak_date: np.datetime64
     continues: bool
@@ -365,6 +391,7 @@ def _track_reuters_waves(
             component_id=record.component_id,
             wave_id=record.wave_id,
             start_date=record.start_date,
+            birth_cell_id=record.birth_cell_id,
             peak_qualified_area=record.peak_qualified_area,
             peak_date=record.peak_date,
             continues=record.continues,
@@ -512,8 +539,8 @@ def _validate_component_membership(
     """Validate identity for a supplied footprint.
 
     Steps:
-        1. Check the footprint component hash and membership fields.
-        2. Require the hash to agree with the stored complete shape.
+        1. Check the complete daily component ID and membership fields.
+        2. Require the ID to agree with the date and first occupied grid cell.
 
     Args:
         component: Supplied daily footprint.
@@ -531,7 +558,7 @@ def _validate_component_membership(
     if len(component.component_id) != 32 or any(
         character not in "0123456789abcdef" for character in component.component_id
     ):
-        msg = "component_id must be a 32-character lowercase MD5 hash"
+        msg = "component_id must be a 32-character lowercase date-and-cell digest"
         raise WaveTrackingError(msg)
     expected = component_identity(
         temperature=series.temperature,
@@ -642,7 +669,7 @@ def _validate_component_geometry(membership: ComponentMembership) -> None:
         msg = (
             "component role areas must match full_geometry in EPSG:6933 km2: "
             f"component {membership.component_id} label {component.label} on "
-            f"{np.datetime64(component.time, 'D')} states "
+            f"{component.time.astype('datetime64[D]')} states "
             f"{stated_full} km2 (qualified {component.area_qualified}, grace "
             f"{component.area_grace}, gap {component.area_gap_filled}) against "
             f"a measured {expected_full} km2, "
@@ -751,6 +778,7 @@ def _validate_previous_record(
     if record.wave_id[:8] != np.datetime_as_string(start_date).replace("-", ""):
         msg = "previous wave key birth-date prefix must match start_date"
         raise WaveTrackingError(msg)
+    _validate_birth_cell(record, "previous")
     peak_date = _as_day(record.peak_date, "peak_date")
     if start_date > previous_day or not start_date <= peak_date <= previous_day:
         msg = "previous wave dates must run from start_date through its component date"
@@ -1124,7 +1152,7 @@ def _continued_record(
 
     Steps:
         1. Compare today's qualified area with the previous peak.
-        2. Carry forward the permanent ID, birth date, and name into today's record.
+        2. Carry forward the permanent ID, birth date, birth cell and name so movement cannot change naming facts.
 
     Args:
         predecessor: Preceding record whose identity and name continue.
@@ -1154,6 +1182,7 @@ def _continued_record(
         component.component_id,
         predecessor.wave_id,
         _as_day(predecessor.start_date, "start_date"),
+        predecessor.birth_cell_id,
         peak_qualified_area,
         peak_date,
         True,
@@ -1173,7 +1202,8 @@ def _new_record(
 
     Steps:
         1. Derive a permanent ID from the birth date and component hash.
-        2. Initialize peak area and peak date from today's component.
+        2. Keep the first occupied cell from the complete birth footprint for later naming.
+        3. Initialize peak area and peak date from today's component.
 
     Args:
         component: Birth footprint and its daily hash.
@@ -1199,6 +1229,7 @@ def _new_record(
         component.component_id,
         wave_id,
         day,
+        FootprintIdentity(day, component.geometry.full_geometry).cell_id,
         component.geometry.area_qualified,
         day,
         False,
@@ -1311,7 +1342,7 @@ def _as_day(value: np.datetime64, label: str) -> np.datetime64:
     if not isinstance(value, np.datetime64) or np.isnat(value):
         msg = f"{label} must be a valid numpy datetime64"
         raise WaveTrackingError(msg)
-    return value.astype("datetime64[D]")
+    return cast("np.datetime64", value.astype("datetime64[D]"))
 
 
 def _is_wave_id(value: str) -> bool:
@@ -1319,24 +1350,51 @@ def _is_wave_id(value: str) -> bool:
 
     Steps:
         1. Check the compact birth-date prefix and separator.
-        2. Require eight lowercase hexadecimal hash characters.
+        2. Require the complete 32-character lowercase date-and-cell digest.
 
     Args:
         value: Candidate wave ID.
 
     Returns:
-        Whether the ID has birth-date and hash-prefix form.
+        Whether the ID has birth-date and complete daily-ID form.
 
     Examples:
-        _is_wave_id("19600105-94691d76")
+        _is_wave_id("19600105-94691d760123456789abcdef01234567")
     """
-    return (
-        isinstance(value, str)
-        and len(value) == 17
-        and value[:8].isdigit()
-        and value[8] == "-"
-        and all(character in "0123456789abcdef" for character in value[9:])
-    )
+    return isinstance(value, str) and WAVE_ID_PATTERN.fullmatch(value) is not None
+
+
+def _validate_birth_cell(record: TrackedWaveComponent, subject: str) -> None:
+    """Check retained birth facts against the permanent wave identity.
+
+    Args:
+        record: Active or final record carrying the birth date and cell address.
+        subject: Plain-language label used when reporting a rejected record.
+
+    Returns:
+        None when the saved address reproduces the permanent key and a birth
+        record still agrees with its complete original footprint.
+
+    Raises:
+        WaveTrackingError: If birth facts are missing, outside the native grid,
+            or inconsistent with the permanent key or birth footprint.
+
+    Examples:
+        ``_validate_birth_cell(record, "previous")`` checks a resumed wave.
+    """
+    try:
+        identity = CellIdentity(record.start_date, record.birth_cell_id)
+        expected = identity.wave_id
+        if not record.continues and identity.digest != record.component_id:
+            raise IdentityError("birth cell must match the complete birth footprint")
+    except IdentityError as error:
+        raise WaveTrackingError(
+            f"{subject} birth_cell_id is invalid: {error}"
+        ) from error
+    if record.wave_id != expected:
+        raise WaveTrackingError(
+            f"{subject} birth_cell_id and start_date must reproduce wave_id"
+        )
 
 
 def _validate_output(
@@ -1371,6 +1429,7 @@ def _validate_output(
         raise WaveTrackingError(msg)
     previous_ids = {record.wave_id for record in previous}
     for record in current:
+        _validate_birth_cell(record, "current")
         if (
             len(set(record.parent_wave_ids)) != len(record.parent_wave_ids)
             or record.wave_id in record.parent_wave_ids
@@ -1382,6 +1441,7 @@ def _validate_output(
             msg = "current overlap_percent must be between 0 and 100"
             raise WaveTrackingError(msg)
     for record in ended:
+        _validate_birth_cell(record.final_record, "ended")
         if (
             record.end_reason == "merged"
             and record.merged_into_wave_id not in current_ids

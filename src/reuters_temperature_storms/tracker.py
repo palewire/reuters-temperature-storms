@@ -26,12 +26,8 @@ from .components import (
     ComponentMembership,
     DailyWaveComponentGeometry,
 )
-from .naming import (
-    DEFAULT_NAMES_SEED,
-    NAME_AREA_THRESHOLD_KM2,
-    _NameSequence,
-    load_name_library,
-)
+from .naming import NAME_AREA_THRESHOLD_KM2, StormNamingError
+from .published_names import StormNames
 from .series import WaveSeries
 
 if TYPE_CHECKING:
@@ -455,6 +451,7 @@ class WaveTracker:
         requested_start: First component date this tracker will consume.
         source_identity: Caller-supplied input location identity.
         prior_checkpoint: Optional state ending the preceding date.
+        names: Shared issued-name and future-name policy, or None for RTS defaults.
 
     Examples:
         tracker = WaveTracker(
@@ -471,6 +468,7 @@ class WaveTracker:
         requested_start: date,
         source_identity: str,
         prior_checkpoint: WaveTrackerCheckpoint | None = None,
+        names: StormNames | None = None,
     ) -> None:
         """Initialize fresh or resumed chronological state.
 
@@ -478,13 +476,15 @@ class WaveTracker:
             1. Check the selected series, first expected date and input location identity.
             2. If resuming, check the saved state and require its next date, series and source to match.
             3. Keep the original run start and accepted checkpoint, or start with empty state.
-            4. Prepare reusable shape checks and the naming sequence.
+            4. Prepare reusable shape checks and the packaged naming policy.
+            5. Reject saved state that has changed a published storm's label.
 
         Args:
             series: Temperature and direction to track.
             requested_start: First batch date expected by this tracker.
             source_identity: Caller-supplied identity of the input location.
             prior_checkpoint: Complete state immediately before requested start.
+            names: Shared naming policy, or None for the installed RTS policy.
 
         Returns:
             None.
@@ -526,7 +526,20 @@ class WaveTracker:
         self._series = series
         self._checkpoint = prior_checkpoint
         self._geometry_validator = _ComponentGeometryValidator()
-        self._name_sequence = _NameSequence(load_name_library(), DEFAULT_NAMES_SEED)
+        try:
+            self._names = StormNames() if names is None else names
+            if prior_checkpoint is not None:
+                for record in prior_checkpoint.active:
+                    self._names.validate_existing(
+                        series=series,
+                        wave_id=record.wave_id,
+                        name=record.name,
+                        as_of_date=prior_checkpoint.through_date,
+                    )
+        except StormNamingError as error:
+            raise WaveTrackerError(
+                f"tracker cannot use its storm names: {error}"
+            ) from error
 
     @property
     def checkpoint(self) -> WaveTrackerCheckpoint | None:
@@ -596,7 +609,7 @@ class WaveTracker:
             1. Require the next consecutive date and the tracker's selected series.
             2. Take active wave records and the next unused name position from the preceding checkpoint.
             3. Match today's footprints to the preceding records and calculate continuations, splits and merges.
-            4. Keep existing names and assign new names in start-date/ID order when peak qualifying area reaches the naming threshold.
+            4. Keep issued labels and visit new qualifying storms in birth-date and original-cell order.
             5. Save active records and the updated name position as today's checkpoint.
             6. Release checks for shapes no longer active and return sorted records, endings and relationships.
 
@@ -629,20 +642,25 @@ class WaveTracker:
             prior_names = {record.wave_id: record.name for record in previous}
             named = {}
             for record in sorted(
-                update.current, key=lambda record: (record.start_date, record.wave_id)
+                update.current,
+                key=lambda record: (record.start_date, record.birth_cell_id),
             ):
                 name = prior_names.get(record.wave_id)
                 if (
                     name is None
                     and record.peak_qualified_area >= NAME_AREA_THRESHOLD_KM2
                 ):
-                    name = (
-                        f"{self._name_sequence.name_at_ordinal(ordinal)} "
-                        f"{str(record.start_date)[:4]}"
+                    name = self._names.assign(
+                        series=self._series,
+                        wave_id=record.wave_id,
+                        birth_date=date.fromisoformat(str(record.start_date)),
+                        cell_id=record.birth_cell_id,
+                        naming_date=batch.date,
+                        ordinal=ordinal,
                     )
                     ordinal += 1
                 named[record.wave_id] = replace(record, name=name)
-        except WaveTrackingError as error:
+        except (WaveTrackingError, StormNamingError) as error:
             raise WaveTrackerError(
                 "component batch cannot produce valid tracker state for "
                 f"{batch.date.isoformat()} {self._series.temperature}/"
@@ -1003,6 +1021,7 @@ def _record_payload(record: TrackedWaveComponent) -> dict[str, object]:
         "component_id": record.component_id,
         "wave_id": record.wave_id,
         "start_date": _day_string(record.start_date),
+        "birth_cell_id": record.birth_cell_id,
         "peak_qualified_area": record.peak_qualified_area,
         "peak_date": _day_string(record.peak_date),
         "continues": record.continues,
@@ -1088,6 +1107,7 @@ def _record_from_payload(value: object, series: WaveSeries) -> TrackedWaveCompon
         component_id=component.component_id,
         wave_id=_string_field(value, "wave_id"),
         start_date=np.datetime64(_string_field(value, "start_date"), "D"),
+        birth_cell_id=_integer_field(value, "birth_cell_id"),
         peak_qualified_area=_float_field(value, "peak_qualified_area"),
         peak_date=np.datetime64(_string_field(value, "peak_date"), "D"),
         continues=_boolean_field(value, "continues"),

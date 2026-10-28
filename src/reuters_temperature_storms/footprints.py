@@ -87,9 +87,10 @@ class FootprintError(ValueError):
 class WaveFootprints:
     """One validated daily footprint input table with its existing schema.
 
-    The input column ``storm_id`` is a daily footprint hash, exposed
-    internally as ``component_id``. Tracked outputs use the persistent
-    ``wave_id``, which stays the same when a wave becomes a named storm.
+    The input column ``storm_id`` identifies the stored row and any associated
+    cell records. Tracking derives its own ``component_id`` from the physical
+    coverage and retains that input label separately. Tracked outputs use the
+    persistent ``wave_id``, which stays the same when a wave becomes named.
 
     Steps:
         1. Keep the accepted daily table on the model without copying it.
@@ -317,8 +318,9 @@ class WaveFootprints:
 
         Steps:
             1. Require every footprint row to represent the requested date.
-            2. Sort rows by their stored daily footprint ID and assign labels in that order.
-            3. Recalculate each ID from the date and complete shape text and reject a mismatch.
+            2. Derive date-and-first-cell identities from the complete footprints.
+            3. Sort those identities before assigning daily component numbers,
+               retaining the original input labels separately.
             4. Copy each role shape and measurement into the records used by the tracker.
 
         Args:
@@ -326,12 +328,12 @@ class WaveFootprints:
             series: Scientific series represented by the file.
 
         Returns:
-            Components sorted by stored footprint ID. Geometry bytes and scalar
+            Components sorted by physical identity. Geometry bytes and scalar
             values retain the supplied precision. Geometry area measurements and
             containment checks remain the tracker's responsibility.
 
         Raises:
-            FootprintError: If a date or component identity does not match the input.
+            FootprintError: If a date is wrong or first-cell identities repeat.
 
         Examples:
             components = footprints.to_components(day, series)
@@ -340,26 +342,27 @@ class WaveFootprints:
         if not frame["date"].eq(pd.Timestamp(day)).all():
             msg = f"footprint dates must all equal midnight {day.isoformat()}"
             raise FootprintError(msg)
-        components = []
-        for label, values in enumerate(
-            frame.sort_values("storm_id").itertuples(index=False), 1
-        ):
+        identified_rows = []
+        for values in frame.itertuples(index=False):
             row = cast("_FootprintRow", values)
-            time = row.date.to_datetime64()
-            expected = component_identity(
+            identity = component_identity(
                 temperature=series.temperature,
                 direction=series.direction,
-                date=time,
+                date=row.date.to_datetime64(),
                 geometry=row.buffer_geometry,
             )
-            if row.storm_id != expected:
-                msg = "footprint storm_id must match its date and full geometry"
-                raise FootprintError(msg)
+            identified_rows.append((identity, row))
+        identified_rows.sort(key=lambda item: item[0])
+        if len({identity for identity, _ in identified_rows}) != len(identified_rows):
+            raise FootprintError("footprints must have unique physical coverage")
+        components = []
+        for label, (identity, row) in enumerate(identified_rows, 1):
             components.append(
                 ComponentMembership(
-                    component_id=row.storm_id,
+                    component_id=identity,
+                    input_id=row.storm_id,
                     geometry=DailyWaveComponentGeometry(
-                        time=time,
+                        time=row.date.to_datetime64(),
                         label=label,
                         geometry=row.geometry,
                         grace_geometry=row.grace_geometry,

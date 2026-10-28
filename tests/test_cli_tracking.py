@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 from reuters_temperature_storms import (
@@ -13,6 +14,8 @@ from reuters_temperature_storms import (
 from reuters_temperature_storms.cli import main
 from reuters_temperature_storms.naming import name_at_ordinal
 from tests.fixtures import create_footprints
+
+pytestmark = pytest.mark.usefixtures("synthetic_name_history")
 
 
 def test_fresh_and_resumed_cli_results_are_identical(tmp_path):

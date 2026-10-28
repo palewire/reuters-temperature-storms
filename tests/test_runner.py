@@ -47,6 +47,9 @@ _SERIES = (
 _AREA_TRANSFORMER = Transformer.from_crs("EPSG:4326", "EPSG:6933", always_xy=True)
 
 
+pytestmark = pytest.mark.usefixtures("synthetic_name_history")
+
+
 def _component(day: date, series: WaveSeries) -> ComponentMembership:
     """Build a measured footprint large enough to receive a Reuters name.
 

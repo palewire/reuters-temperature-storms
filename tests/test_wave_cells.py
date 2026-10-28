@@ -34,6 +34,9 @@ SERIES = WaveSeries("tasmax", "warm")
 AREA_TRANSFORMER = Transformer.from_crs(4326, 6933, always_xy=True)
 
 
+pytestmark = pytest.mark.usefixtures("synthetic_name_history")
+
+
 def _frame(cells=(), *, day=DAY):
     """Create exact cell polygons and canonical state columns.
 
