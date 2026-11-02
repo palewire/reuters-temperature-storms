@@ -443,7 +443,7 @@ class NameSequence:
     Args:
         library: Validated name library, or None for the packaged library.
         seed: Nonnegative integer encoding category and name permutations.
-            The fixed Reuters seed is the default.
+            The packaged permutation seed is the default.
 
     Examples:
         sequence = NameSequence()
@@ -464,13 +464,13 @@ class NameSequence:
             library: Validated names and bucket dimensions, or None for the
                 packaged library.
             seed: Nonnegative integer encoding category and name permutations.
-                The fixed Reuters seed is the default.
+                The packaged permutation seed is the default.
 
         Returns:
             None.
 
         Examples:
-            ``NameSequence()`` starts the published Reuters naming sequence.
+            ``NameSequence()`` uses the packaged library and default seed.
         """
         _validate_seed(seed)
         library = load_name_library() if library is None else library

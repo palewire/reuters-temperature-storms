@@ -479,7 +479,7 @@ def _validate_components(
     Steps:
         1. Check each component's day, membership, and geometry.
         2. Reject repeated component IDs or ordering digests.
-        3. Return the historical footprint order without changing permanent IDs.
+        3. Return the footprint ordering without changing permanent IDs.
 
     Args:
         day: The tracking day that every component must represent.

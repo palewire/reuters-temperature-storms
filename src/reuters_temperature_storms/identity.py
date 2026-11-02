@@ -104,7 +104,7 @@ class CellIdentity:
 class FootprintIdentity:
     """Identify a daily component by its first occupied quarter-degree cell.
 
-    Finished footprints contain complete cells on the Reuters grid. Longitude
+    Finished footprints contain complete quarter-degree grid cells. Longitude
     runs from -179.75 to +180 and latitude from -90 to +90. The two display
     halves of a +180 cell have one address. Cells are ordered by latitude, then
     longitude; separate components on the same day cannot own the same cell.

@@ -109,8 +109,8 @@ def run(
     Args:
         wave_footprints: Optional directory or URL containing prepared footprint
             shapes and measurements to retain without rebuilding them.
-        wave_cells: Required complete daily cell directory or URL. The original
-            naming order depends on all source cells, including gap-filled cells.
+        wave_cells: Required complete daily cell directory or URL. Footprint
+            ordering uses all source cells, including gap-filled cells.
         profile: Caller-selected AWS profile.
         series: Maximum/minimum and warm/cold series to process.
         start_date: First included input date.

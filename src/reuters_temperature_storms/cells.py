@@ -353,14 +353,14 @@ class WaveCellSource(DailyFileSource):
         return cells
 
     def read(self, day: date, series: WaveSeries) -> tuple[ComponentMembership, ...]:
-        """Build footprints and historical order from the same complete native cells.
+        """Build footprints and ordering codes from the same complete native cells.
 
         Args:
             day: Requested plain calendar date.
             series: Maximum/minimum and warm/cold scientific series.
 
         Returns:
-            Daily components with stable cell IDs and historical ordering
+            Daily components with stable cell IDs and fixed ordering
             digests. An accepted empty date returns an empty tuple.
 
         Raises:

@@ -1,9 +1,9 @@
-"""Recreate the published allocation order from finished native cell coverage.
+"""Calculate fixed footprint ordering codes from complete native cell coverage.
 
-Names published in the Reuters story depend on the original Linux ordering of
-birth shapes. This module rebuilds that exact ordering input from the supplied
-qualified, grace and complete coverage. It does not read a name list, catalog,
-external file, input label or permanent wave ID.
+This module constructs grid-cell rectangles, sorts and joins their coverage in
+an explicit sequence, and hashes each date and resulting shape description.
+The codes order tracking and naming decisions independently of permanent wave
+IDs. Qualified, grace and gap-filled cells all contribute to the calculation.
 """
 
 from __future__ import annotations
@@ -28,15 +28,15 @@ if TYPE_CHECKING:
 
 
 class FootprintOrderError(ValueError):
-    """Raised when finished coverage cannot reproduce the historical order."""
+    """Raised when coverage or runtime settings cannot produce footprint ordering codes."""
 
 
 @dataclass(frozen=True, slots=True)
 class HistoricalFootprintOrder:
-    """Rebuild one whole day's published naming order from its exact native cells.
+    """Calculate one whole day's footprint ordering codes from its native cells.
 
     All native cells matter, including gap-only groups later removed from the
-    footprint table. Their position in the original polygon-join sequence can
+    footprint table. Their position in the fixed polygon-join sequence can
     affect a retained dateline wave. Finished roles alone cannot supply that
     complete calculation context.
 
@@ -171,8 +171,8 @@ class HistoricalFootprintOrder:
                 cells absent from the finished footprint table.
 
         Returns:
-            Full lowercase historical MD5 digests in the same order as roles.
-            No input label, name, catalog or file lookup enters the calculation.
+            Full lowercase MD5 digests of dates and shape descriptions, in the
+            same order as roles.
 
         Raises:
             FootprintOrderError: If the supplied daily calculation is incomplete
@@ -185,7 +185,7 @@ class HistoricalFootprintOrder:
 
     @property
     def digests(self) -> tuple[str, ...]:
-        """Return the immutable original date-and-shape digests for the whole day.
+        """Return the immutable date-and-shape digests for the whole day.
 
         Args:
             None.
@@ -275,7 +275,7 @@ class HistoricalFootprintOrder:
 
 @dataclass(slots=True)
 class _HistoricalComparisonSort:
-    """Sort integer positions with the historical GNU treatment of equal values.
+    """Sort integer positions with explicit comparison and equal-value rules.
 
     Args:
         order: Mutable positions to rearrange. Each points into values.
@@ -320,7 +320,7 @@ class _HistoricalComparisonSort:
                 self._insert_one(position)
 
     def _place_pivot(self, start: int, end: int) -> None:
-        """Move the historical three-position choice into the first position.
+        """Select a pivot from three positions and move it to the first position.
 
         Args:
             start: First included position.
@@ -426,7 +426,7 @@ class _HistoricalComparisonSort:
         order[position] = item
 
     def _insert_range(self, start: int, end: int) -> None:
-        """Finish a short range with the historical insertion procedure.
+        """Finish a short range by inserting each item into the sorted prefix.
 
         Args:
             start: First included position.
@@ -456,7 +456,7 @@ class _HistoricalComparisonSort:
             item: Original value to insert after lowering the hole.
 
         Returns:
-            None. Restores the historical maximum-heap ordering.
+            None. Restores maximum-heap ordering.
 
         Examples:
             sorter._adjust_heap(0, 0, len(sorter.order), sorter.order[0])
@@ -483,7 +483,7 @@ class _HistoricalComparisonSort:
         order[start + hole] = item
 
     def _heap_sort(self, start: int, end: int) -> None:
-        """Apply the historical heap safeguard without changing its tie choices.
+        """Sort a range using a maximum heap and fixed equal-value choices.
 
         Args:
             start: First included position.
@@ -508,7 +508,7 @@ class _HistoricalComparisonSort:
 
 
 class _HistoricalPolygonUnion:
-    """Join polygons with the original Linux leaf sorting and complete overlays.
+    """Join polygons with fixed spatial sorting and complete geometric overlays.
 
     Args:
         None. Each join keeps its own polygon list and sorting positions.
@@ -519,7 +519,7 @@ class _HistoricalPolygonUnion:
 
     @classmethod
     def join(cls, geometries: Iterable[Geometry | None]) -> Geometry | None:
-        """Join present polygon parts using the fixed historical calculation.
+        """Join present polygon parts using fixed sorting and midpoint grouping.
 
         Args:
             geometries: Polygon shapes in their supplied order; missing roles

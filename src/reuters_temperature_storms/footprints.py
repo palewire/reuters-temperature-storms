@@ -395,7 +395,7 @@ class WaveFootprints:
         Steps:
             1. Require every footprint row to represent the requested date.
             2. Derive date-and-first-cell identities from the complete footprints.
-            3. Rebuild all historical ordering digests together from the day's
+            3. Calculate all footprint ordering digests together from the day's
                complete native cell roles, retaining the original labels separately.
             4. Sort the ordering digests and assign daily component numbers.
                Keep the permanent identities, shapes and measurements unchanged.
@@ -407,7 +407,7 @@ class WaveFootprints:
                 including gap-filled cells outside retained footprints.
 
         Returns:
-            Components sorted by historical footprint digest. Geometry bytes and scalar
+            Components sorted by footprint ordering digest. Geometry bytes and scalar
             values retain the supplied precision. Geometry area measurements and
             containment checks remain the tracker's responsibility.
 

@@ -62,7 +62,7 @@ class ComponentMembership:
     Args:
         component_id: Identifier of the supplied daily component.
         geometry: Daily geometry and role-area record for the component.
-        order_digest: Full historical footprint digest used to order daily
+        order_digest: Full date-and-shape digest used to order daily
             tracking decisions. It is separate from the permanent cell ID.
         input_id: Original file-row identifier, when the component came from a
             prepared input file. It does not participate in tracking decisions.

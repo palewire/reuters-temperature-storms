@@ -1,4 +1,4 @@
-"""How to calculate the supersized heat waves tracked by the Reuters Climate Monitor."""
+"""Calculate, track and summarize temperature events on a regular weather grid."""
 
 from .anomalies import (
     DailyAnomalies,
