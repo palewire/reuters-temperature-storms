@@ -220,9 +220,14 @@ class GridRegion:
             for bound in bounds
         ):
             raise AnomalyError("region bounds must be numbers")
-        if not all(
-            np.isfinite(bound) and bound * 4 == np.floor(bound * 4) for bound in bounds
-        ):
+        try:
+            on_grid = all(
+                np.isfinite(bound) and bound * 4 == np.floor(bound * 4)
+                for bound in bounds
+            )
+        except (OverflowError, TypeError) as error:
+            raise AnomalyError(f"invalid region bounds: {error}") from error
+        if not on_grid:
             raise AnomalyError("region bounds must be quarter-degree cell centres")
         if not -180 < self.west <= self.east <= 180:
             raise AnomalyError("region requires -180 < west <= east <= 180")

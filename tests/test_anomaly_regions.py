@@ -15,6 +15,7 @@ from reuters_temperature_storms.anomalies import (
     DailyTemperatures,
     GridRegion,
     SeasonalDistribution,
+    TemperatureSchema,
 )
 from reuters_temperature_storms.anomaly_run import AnomalyFileSource, AnomalyRun
 from reuters_temperature_storms.cli import main
@@ -113,6 +114,28 @@ def test_global_default_still_rejects_a_regional_table():
         DailyTemperatures(daily, DAY)
 
 
+def test_regional_validation_leaves_the_cached_global_schema_intact():
+    """Keep complete_grid on the shared schema after a regional validation.
+
+    Args:
+        None.
+
+    Returns:
+        None. The cached global schema still requires the complete grid.
+
+    Examples:
+        Run pytest tests/test_anomaly_regions.py -k cached.
+
+    Steps:
+        1. Validate a regional temperature table.
+        2. Check that the cached global schema still carries complete_grid.
+    """
+    daily, _, _ = regional_frames()
+    DailyTemperatures(daily, DAY, REGION)
+    names = [check.name for check in TemperatureSchema.to_schema().checks]
+    assert "complete_grid" in names
+
+
 @pytest.mark.parametrize(
     "damage", ["missing", "outside", "duplicate", "off_grid", "infinite"]
 )
@@ -181,6 +204,26 @@ def test_region_bounds_reject_invalid_rectangles(text):
     """
     with pytest.raises(AnomalyError):
         GridRegion.parse(text)
+
+
+def test_region_bounds_reject_oversized_integers():
+    """Report bounds too large for floating point as invalid regions.
+
+    Args:
+        None.
+
+    Returns:
+        None. Construction raises AnomalyError rather than a numpy error.
+
+    Examples:
+        Run pytest tests/test_anomaly_regions.py -k oversized.
+
+    Steps:
+        1. Construct a region with an integer beyond the float range.
+        2. Check that the region is refused with AnomalyError.
+    """
+    with pytest.raises(AnomalyError):
+        GridRegion(10**400, 0, 0, 0)
 
 
 def test_builder_rejects_mismatched_regions():

@@ -204,7 +204,10 @@ def run(
 @click.option(
     "--region",
     metavar="WEST,SOUTH,EAST,NORTH",
-    help="Inclusive cell-centre bounds of a rectangle used instead of the global grid.",
+    help=(
+        "Inclusive cell-centre bounds of a rectangle used instead of the global"
+        " grid. Later stages still require global anomalies."
+    ),
 )
 def anomalies(
     temperatures: str,
