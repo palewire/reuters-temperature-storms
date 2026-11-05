@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import ClassVar
@@ -175,16 +176,156 @@ class DailyAnomalySchema(CompleteMeasurementSchema):
 
 
 @dataclass(frozen=True, slots=True)
+class GridRegion:
+    """An inclusive rectangle of quarter-degree cells used instead of the globe.
+
+    Steps:
+        1. Retain the western, southern, eastern and northern cell centres.
+        2. Validate tables that hold every cell inside the rectangle and none outside it.
+
+    Args:
+        west: Westernmost included longitude, above -180.
+        south: Southernmost included latitude.
+        east: Easternmost included longitude, not west of west.
+        north: Northernmost included latitude, not south of south.
+
+    Examples:
+        texas = GridRegion(-106.75, 25.75, -93.5, 36.5)
+    """
+
+    west: float
+    south: float
+    east: float
+    north: float
+
+    def __post_init__(self) -> None:
+        """Require finite quarter-degree bounds in order and inside the globe.
+
+        Steps:
+            1. Require four finite numbers on the quarter-degree grid.
+            2. Require ordered bounds within the global longitude and latitude ranges.
+
+        Args:
+            None.
+
+        Returns:
+            None. Raises AnomalyError for invalid bounds.
+
+        Examples:
+            region = GridRegion(-97.75, 30.25, -97.75, 30.25)
+        """
+        bounds = (self.west, self.south, self.east, self.north)
+        if any(
+            isinstance(bound, bool) or not isinstance(bound, int | float)
+            for bound in bounds
+        ):
+            raise AnomalyError("region bounds must be numbers")
+        if not all(
+            np.isfinite(bound) and bound * 4 == np.floor(bound * 4) for bound in bounds
+        ):
+            raise AnomalyError("region bounds must be quarter-degree cell centres")
+        if not -180 < self.west <= self.east <= 180:
+            raise AnomalyError("region requires -180 < west <= east <= 180")
+        if not -90 <= self.south <= self.north <= 90:
+            raise AnomalyError("region requires -90 <= south <= north <= 90")
+
+    @classmethod
+    def parse(cls, text: str) -> GridRegion:
+        """Read WEST,SOUTH,EAST,NORTH cell centres from one option value.
+
+        Steps:
+            1. Split the text into four comma-separated numbers.
+            2. Construct and validate the region.
+
+        Args:
+            text: Comma-separated western, southern, eastern and northern bounds.
+
+        Returns:
+            Validated region.
+
+        Raises:
+            AnomalyError: If the text does not hold four valid bounds.
+
+        Examples:
+            region = GridRegion.parse("-106.75,25.75,-93.5,36.5")
+        """
+        parts = text.split(",")
+        if len(parts) != 4:
+            raise AnomalyError("region must be WEST,SOUTH,EAST,NORTH")
+        try:
+            west, south, east, north = (float(part) for part in parts)
+        except ValueError as error:
+            raise AnomalyError(f"invalid region {text!r}: {error}") from error
+        return cls(west, south, east, north)
+
+    @property
+    def cells(self) -> int:
+        """Count the quarter-degree cells inside the inclusive rectangle.
+
+        Steps:
+            1. Count longitude and latitude positions between the bounds.
+            2. Multiply the two counts.
+
+        Args:
+            None.
+
+        Returns:
+            Number of cells a complete regional table holds.
+
+        Examples:
+            GridRegion(-97.75, 30.0, -97.25, 30.5).cells
+        """
+        columns = round((self.east - self.west) * 4) + 1
+        rows = round((self.north - self.south) * 4) + 1
+        return columns * rows
+
+    def validate(
+        self, schema: type[CompleteMeasurementSchema], frame: pd.DataFrame
+    ) -> None:
+        """Apply every schema rule except global coverage, then require the region.
+
+        Steps:
+            1. Validate the table with the schema minus its complete_grid check.
+            2. Require every row inside the rectangle and the rectangle's cell count.
+               With the schema's uniqueness and quarter-degree rules, this
+               establishes complete coverage of the region.
+
+        Args:
+            schema: Measurement schema whose other rules still apply.
+            frame: Measurement table to check.
+
+        Returns:
+            None. Raises SchemaError or AnomalyError for rejected tables.
+
+        Examples:
+            region.validate(TemperatureSchema, frame)
+        """
+        regional = copy.deepcopy(schema.to_schema())
+        regional.checks = [
+            check for check in regional.checks or () if check.name != "complete_grid"
+        ]
+        regional.validate(frame)
+        inside = frame["longitude"].between(self.west, self.east) & frame[
+            "latitude"
+        ].between(self.south, self.north)
+        if not inside.all() or len(frame) != self.cells:
+            raise AnomalyError(
+                f"table must hold exactly the {self.cells} cells of {self}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class MeasurementGrid:
-    """One date's accepted global measurement table.
+    """One date's accepted global or regional measurement table.
 
     Steps:
         1. Retain the supplied fields for this record.
         2. Expose the values to the corresponding processing and validation methods.
 
     Args:
-        frame: Finite float64 measurements and exact global coordinates.
+        frame: Finite float64 measurements and exact grid coordinates.
         day: Plain date represented by the rows or calendar baseline labels.
+        region: Optional rectangle that replaces the complete global grid.
 
     Examples:
         daily = DailyTemperatures(frame, date(2024, 7, 1))
@@ -192,13 +333,15 @@ class MeasurementGrid:
 
     frame: pd.DataFrame
     day: date
+    region: GridRegion | None = None
     schema: ClassVar[type[CompleteMeasurementSchema]]
 
     def __post_init__(self) -> None:
         """Require a complete grid and the exact requested calendar labels.
 
         Steps:
-            1. Validate the date, schema, finite values and full global grid.
+            1. Validate the date, schema and finite values, plus the full global
+               grid or, when a region is given, every cell of that region.
             2. Require every stored date or baseline calendar label to match.
 
         Args:
@@ -212,8 +355,13 @@ class MeasurementGrid:
         """
         if not isinstance(self.day, date) or isinstance(self.day, datetime):
             raise AnomalyError("day must be a plain calendar date")
+        if self.region is not None and not isinstance(self.region, GridRegion):
+            raise AnomalyError("region must be a GridRegion")
         try:
-            self.schema.validate(self.frame)
+            if self.region is None:
+                self.schema.validate(self.frame)
+            else:
+                self.region.validate(self.schema, self.frame)
         except (SchemaError, SchemaErrors) as error:
             raise AnomalyError(f"invalid {type(self).__name__}: {error}") from error
         if "date" in self.frame:
@@ -342,6 +490,8 @@ class DailyAnomalyBuilder:
         """
         if not (daily.day == climatology.day == seasonal.day):
             raise AnomalyError("daily and baseline dates must match")
+        if not (daily.region == climatology.region == seasonal.region):
+            raise AnomalyError("daily and baseline regions must match")
         keys = ["longitude", "latitude"]
         temperature = daily.frame.set_index(keys)
         normal = climatology.frame.set_index(keys).reindex(temperature.index)
@@ -370,4 +520,4 @@ class DailyAnomalyBuilder:
                 )
             result[f"{metric}_p90_score"] = delta / warm
             result[f"{metric}_p10_score"] = delta / cold
-        return DailyAnomalies(result.reset_index(), daily.day)
+        return DailyAnomalies(result.reset_index(), daily.day, daily.region)

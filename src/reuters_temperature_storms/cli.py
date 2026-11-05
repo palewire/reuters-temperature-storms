@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import click
 import fsspec
 
+from .anomalies import GridRegion
 from .anomaly_run import AnomalyFileSource, AnomalyRun
 from .cell_run import CellRun
 from .cell_scores import WaveCellScoreSource
@@ -200,6 +201,11 @@ def run(
 @click.option(
     "--check-only", is_flag=True, help="Validate output coverage without input reads."
 )
+@click.option(
+    "--region",
+    metavar="WEST,SOUTH,EAST,NORTH",
+    help="Inclusive cell-centre bounds of a rectangle used instead of the global grid.",
+)
 def anomalies(
     temperatures: str,
     climatology: str,
@@ -211,6 +217,7 @@ def anomalies(
     max_workers: int | None,
     force_update: bool,
     check_only: bool,
+    region: str | None,
 ) -> None:
     """Save four unthresholded daily scores for subsequent weighted scores.
 
@@ -230,6 +237,7 @@ def anomalies(
         max_workers: Positive process count or available CPUs.
         force_update: Replace existing outputs.
         check_only: Check output dates without reading source tables.
+        region: Optional WEST,SOUTH,EAST,NORTH rectangle replacing the global grid.
 
     Returns:
         None. Prints file statuses and completed location.
@@ -243,6 +251,7 @@ def anomalies(
     options: dict[str, object] = {"profile": profile} if profile else {}
     calendar = "{month:02d}-{day:02d}.parquet"
     try:
+        grid_region = GridRegion.parse(region) if region is not None else None
         job = AnomalyRun(
             AnomalyFileSource(temperatures, options),
             AnomalyFileSource(climatology, options, filename_template=calendar),
@@ -254,6 +263,7 @@ def anomalies(
             end_date.date(),
             max_workers,
             force_update,
+            grid_region,
         )
         if check_only:
             if force_update:
