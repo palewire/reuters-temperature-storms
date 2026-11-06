@@ -37,9 +37,9 @@ survival. A new split identity gets its own birth key. Daily ordering keys also
 preserve the original tie decisions when overlaps are equal. Public IDs are
 separate from both ordering keys, so refactoring their spelling cannot reorder
 names. Checkpoints retain these facts and the next unused sequence position.
-Given identical complete physical inputs and saved state, RTS and Climate
-Monitor use the same allocation calculation. No issued-name lookup table or
-published storm file supplies runtime assignments.
+Given identical complete physical inputs and saved state, the tracker assigns
+names in the same order. No issued-name lookup table or published storm file
+supplies runtime assignments.
 
 The tracker identifies a new storm from its birth date and the first occupied
 cell in its complete footprint on the fixed 0.25° grid. Cells are ordered by
