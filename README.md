@@ -10,11 +10,4 @@ For the Reuters analysis, temperature readings were drawn from the [ERA5 reanaly
 
 Using different temperature readings and baseline climatologies will lead to differing results. Additionally, small differences in computer architecture may affect temperature readings and percentile scores by very small amounts.
 
-Storm names use a fixed name library and seed, with a consistent ordering for
-storms born on the same day. The published storm table is included in this
-repository. See [storm names and IDs](docs/storm-naming.md) for details.
-
-Older catalogs and checkpoints using shape-based IDs must be rebuilt before
-using this version. See the [changelog](CHANGELOG.md) for compatibility changes.
-
 If you have questions about the code or data, you're encouraged to contact [Ben Welsh](mailto:ben.welsh@thomsonreuters.com) and [Maurice Tamman](mailto:maurice.tamman@reuters.com) at Reuters.
