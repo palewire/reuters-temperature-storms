@@ -17,9 +17,10 @@ from pandera.typing import Series  # noqa: TC002 - schema annotations.
 from pyproj import CRS
 from shapely import bounds, box, equals
 
+from .identity import WAVE_ID_PATTERN
 from .series import WaveSeries
 
-_WAVE_ID = r"^[0-9]{8}-[0-9a-f]{8}$"
+_WAVE_ID = f"^{WAVE_ID_PATTERN.pattern}$"
 _FOOTPRINT_ID = r"^[0-9a-f]{32}$"
 
 
@@ -169,7 +170,9 @@ class FileSchema(pa.DataFrameModel):
             Whether each list contains only well-formed distinct wave IDs.
 
         Examples:
-            FileSchema.wave_id_lists(pd.Series([[], ["20200101-01234567"]]))
+            FileSchema.wave_id_lists(
+                pd.Series([[], ["20200101-0123456789abcdef0123456789abcdef"]])
+            )
         """
 
         def valid(value: object) -> bool:
@@ -177,7 +180,7 @@ class FileSchema(pa.DataFrameModel):
 
             Steps:
                 1. Require an iterable value that is neither text, bytes nor a mapping.
-                2. Read its entries and check eight date digits, one hyphen and eight
+                2. Read its entries and check eight date digits, one hyphen and 32
                    lowercase hexadecimal characters in each identifier.
                 3. Require no repeated identifiers and return the result without changing
                    the original value.
@@ -189,17 +192,13 @@ class FileSchema(pa.DataFrameModel):
                 Whether its entries are distinct permanent wave IDs.
 
             Examples:
-                valid(["20200101-01234567"])
+                valid(["20200101-0123456789abcdef0123456789abcdef"])
             """
             if not isinstance(value, Iterable) or isinstance(value, str | bytes | dict):
                 return False
             keys = list(value)
             return all(
-                isinstance(key, str)
-                and len(key) == 17
-                and key[:8].isdigit()
-                and key[8] == "-"
-                and all(letter in "0123456789abcdef" for letter in key[9:])
+                isinstance(key, str) and WAVE_ID_PATTERN.fullmatch(key) is not None
                 for key in keys
             ) and len(set(keys)) == len(keys)
 

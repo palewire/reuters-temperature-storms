@@ -43,6 +43,7 @@ def _component(
     west: float = -20,
     east: float = 20,
     series: WaveSeries = _SERIES,
+    order_digest: str | None = None,
 ) -> ComponentMembership:
     """Create a large qualifying footprint eligible for a Reuters name.
 
@@ -52,6 +53,8 @@ def _component(
         west: Western boundary in degrees.
         east: Eastern boundary in degrees.
         series: Temperature and direction used for component identity.
+        order_digest: Explicit synthetic ordering token. The component ID is
+            the default token because these test polygons are not native cells.
 
     Returns:
         A valid named-size component with measured equal-area geometry.
@@ -67,13 +70,15 @@ def _component(
     geometry = box(west, -20, east, 20)
     area = float(transform(_AREA_TRANSFORMER.transform, geometry).area / 1_000_000)
     day_value = np.datetime64(day, "D")
+    component_id = component_identity(
+        temperature=series.temperature,
+        direction=series.direction,
+        date=day_value,
+        geometry=geometry,
+    )
     return ComponentMembership(
-        component_id=component_identity(
-            temperature=series.temperature,
-            direction=series.direction,
-            date=day_value,
-            geometry=geometry,
-        ),
+        component_id=component_id,
+        order_digest=component_id if order_digest is None else order_digest,
         geometry=DailyWaveComponentGeometry(
             time=day_value,
             label=label,
@@ -112,6 +117,45 @@ def _batch(
         2. Construct the corresponding checkpoint and daily tracking batch.
     """
     return DailyComponentBatch(date=day, series=series, components=components)
+
+
+def _unnamed_component(
+    day: date, label: int, *, west: float, east: float, order_digest: str
+) -> ComponentMembership:
+    """Supply a large active footprint with a small qualifying core.
+
+    Args:
+        day: Calendar date of the synthetic component.
+        label: Unique positive component label for this date.
+        west: Western boundary of the complete footprint.
+        east: Eastern boundary of the complete footprint.
+        order_digest: Explicit synthetic ordering digest for this date.
+
+    Returns:
+        A component below the naming threshold whose full coverage can continue
+        on later dates before its qualifying core grows.
+
+    Examples:
+        component = _unnamed_component(_START, 1, west=-80, east=-40, order_digest="0" * 32)
+    """
+    component = _component(day, label, west=west, east=east, order_digest=order_digest)
+    core = box(west, -20, west + 2, 20)
+    grace = component.geometry.full_geometry.difference(core)
+    qualified_area = float(
+        transform(_AREA_TRANSFORMER.transform, core).area / 1_000_000
+    )
+    grace_area = float(transform(_AREA_TRANSFORMER.transform, grace).area / 1_000_000)
+    return replace(
+        component,
+        geometry=replace(
+            component.geometry,
+            geometry=core,
+            grace_geometry=grace,
+            area_qualified=qualified_area,
+            area_grace=grace_area,
+            qualified_fraction=qualified_area / (qualified_area + grace_area),
+        ),
+    )
 
 
 @pytest.mark.unit
@@ -720,8 +764,8 @@ def test_saved_batch_encoding_stays_exact_without_extra_validation(choice, monke
     assert calls == []
 
 
-def test_existing_saved_batches_keep_exact_bytes():
-    """Read pre-refactor saved records and reproduce their JSON and WKB bytes.
+def test_saved_batches_keep_exact_bytes():
+    """Read saved full-digest records and reproduce their JSON and WKB bytes.
 
     Args:
         None.
@@ -730,7 +774,7 @@ def test_existing_saved_batches_keep_exact_bytes():
         None. Verifies named records, split edges, mergers and explicit endings.
 
     Examples:
-        Run pytest tests/test_tracker.py -k existing_saved_batches.
+        Run pytest tests/test_tracker.py -k saved_batches_keep_exact_bytes.
 
     Steps:
         1. Load the saved fixture batch documents and construct the matching checkpoint.
@@ -751,6 +795,92 @@ def test_existing_saved_batches_keep_exact_bytes():
         original = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
         restored = WaveTrackingBatch.from_bytes(original, checkpoint)
         assert restored.to_bytes() == original
+
+
+@pytest.mark.unit
+def test_input_labels_do_not_change_saved_state_or_resumed_endings() -> None:
+    """Resume scientific state after temporary input-row labels are omitted.
+
+    Args:
+        None.
+
+    Returns:
+        None. Direct and resumed records have equal scientific bytes, including
+        names and explicit endings, while today's input labels remain available.
+
+    Examples:
+        Run pytest tests/test_tracker.py -k input_labels_do_not_change.
+
+    Steps:
+        1. Track labelled input and restore its checkpoint without those labels.
+        2. Continue both trackers with the next labelled component.
+        3. Restore the continued state and compare direct and resumed endings.
+    """
+    first = _batch(_START, (replace(_component(_START, 1), input_id="1" * 32),))
+    direct = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="footprints"
+    )
+    opening = direct.advance(first)
+    saved = opening.checkpoint.to_bytes()
+    assert "input_id" not in json.loads(saved)["active"][0]["component"]
+    restored = WaveTrackerCheckpoint.from_bytes(saved)
+    assert restored.active[0].component.input_id is None
+    resumed = WaveTracker(
+        series=_SERIES,
+        requested_start=_START + timedelta(days=1),
+        source_identity="footprints",
+        prior_checkpoint=restored,
+    )
+    next_day = _START + timedelta(days=1)
+    second = _batch(next_day, (replace(_component(next_day, 1), input_id="2" * 32),))
+    continued = direct.advance(second)
+    resumed_continuation = resumed.advance(second)
+    assert resumed_continuation.to_bytes() == continued.to_bytes()
+    assert resumed_continuation.current[0].component.input_id == "2" * 32
+    assert continued.current[0].wave_id == opening.current[0].wave_id
+    assert continued.current[0].name == opening.current[0].name
+    ending_tracker = WaveTracker(
+        series=_SERIES,
+        requested_start=_START + timedelta(days=2),
+        source_identity="footprints",
+        prior_checkpoint=WaveTrackerCheckpoint.from_bytes(
+            continued.checkpoint.to_bytes()
+        ),
+    )
+    empty = _batch(_START + timedelta(days=2), ())
+    direct_ending = direct.advance(empty)
+    resumed_ending = ending_tracker.advance(empty)
+    assert resumed_ending.to_bytes() == direct_ending.to_bytes()
+    assert direct_ending.ended[0].final_record.component.input_id == "2" * 32
+    assert resumed_ending.ended[0].final_record.component.input_id is None
+
+
+@pytest.mark.unit
+def test_checkpoint_rejects_shortened_permanent_identity() -> None:
+    """Reject an old shortened key before it can continue under the shared rule.
+
+    Args:
+        None.
+
+    Returns:
+        None. Restoring the shortened active key raises the checkpoint error.
+
+    Examples:
+        Run pytest tests/test_tracker.py -k shortened_permanent_identity.
+
+    Steps:
+        1. Create valid full-digest tracker state.
+        2. Replace its permanent key with the former eight-character suffix.
+        3. Require checkpoint restoration to reject the changed state.
+    """
+    tracker = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="footprints"
+    )
+    tracker.advance(_batch(_START, (_component(_START, 1),)))
+    document = json.loads(tracker.checkpoint_bytes())
+    document["active"][0]["wave_id"] = document["active"][0]["wave_id"][:17]
+    with pytest.raises(WaveTrackerError, match="previous wave IDs"):
+        WaveTrackerCheckpoint.from_bytes(json.dumps(document).encode())
 
 
 @pytest.mark.parametrize(
@@ -893,3 +1023,359 @@ def test_january_archive_seed_names_from_zero_and_resumes_exactly():
         prior_checkpoint=WaveTrackerCheckpoint.from_bytes(tracker.checkpoint_bytes()),
     )
     assert restored.advance(batch).to_bytes() == tracker.advance(batch).to_bytes()
+
+
+@pytest.mark.unit
+def test_delayed_names_keep_birth_order_after_daily_reorder_and_resume() -> None:
+    """Keep original naming order when active footprints qualify on a later day.
+
+    Args:
+        None.
+
+    Returns:
+        None. Quiet dates consume no names, and a restart retains birth order,
+        names, years and the next unused sequence position.
+
+    Examples:
+        pytest tests/test_tracker.py -k delayed_names_keep_birth_order
+    """
+    second_day = _START + timedelta(days=1)
+    naming_day = _START + timedelta(days=2)
+    batches = (
+        _batch(
+            _START,
+            (
+                _unnamed_component(
+                    _START, 1, west=-80, east=-40, order_digest="f" * 32
+                ),
+                _unnamed_component(_START, 2, west=40, east=80, order_digest="0" * 32),
+            ),
+        ),
+        _batch(
+            second_day,
+            (
+                _unnamed_component(
+                    second_day, 1, west=-80, east=-40, order_digest="a" * 32
+                ),
+                _unnamed_component(
+                    second_day, 2, west=40, east=80, order_digest="b" * 32
+                ),
+            ),
+        ),
+        _batch(
+            naming_day,
+            (
+                _component(naming_day, 1, west=-80, east=-40, order_digest="0" * 32),
+                _component(naming_day, 2, west=40, east=80, order_digest="f" * 32),
+            ),
+        ),
+    )
+    direct = tuple(
+        track_reuters_component_batches(
+            batches, series=_SERIES, requested_start=_START, source_identity="synthetic"
+        )
+    )
+    assert [output.checkpoint.next_name_ordinal for output in direct] == [0, 0, 2]
+    assert all(
+        record.name is None for output in direct[:2] for record in output.current
+    )
+    restored = WaveTrackerCheckpoint.from_bytes(direct[1].checkpoint.to_bytes())
+    resumed = WaveTracker(
+        series=_SERIES,
+        requested_start=naming_day,
+        source_identity="synthetic",
+        prior_checkpoint=restored,
+    ).advance(batches[2])
+    assert resumed.to_bytes() == direct[2].to_bytes()
+    assert resumed.checkpoint.to_bytes() == direct[2].checkpoint.to_bytes()
+    records = {
+        record.component.geometry.full_geometry.bounds[0]: record
+        for record in resumed.current
+    }
+    assert records[-80].name == f"{name_at_ordinal(1)} 2023"
+    assert records[40].name == f"{name_at_ordinal(0)} 2023"
+    assert records[-80].birth_order_digest == "f" * 32
+    assert records[-80].component.order_digest == "0" * 32
+    assert records[40].birth_order_digest == "0" * 32
+    final_day = naming_day + timedelta(days=1)
+    ended = WaveTracker(
+        series=_SERIES,
+        requested_start=final_day,
+        source_identity="synthetic",
+        prior_checkpoint=WaveTrackerCheckpoint.from_bytes(
+            resumed.checkpoint.to_bytes()
+        ),
+    ).advance(_batch(final_day, ()))
+    assert ended.checkpoint.active == ()
+    assert ended.checkpoint.next_name_ordinal == 2
+    assert {item.final_record.name for item in ended.ended} == {
+        record.name for record in resumed.current
+    }
+    assert {item.final_record.birth_order_digest for item in ended.ended} == {
+        "0" * 32,
+        "f" * 32,
+    }
+
+
+@pytest.mark.unit
+def test_naming_uses_birth_date_before_birth_digest() -> None:
+    """Give an older qualifying wave its name before a lower-digest new birth.
+
+    Args:
+        None.
+
+    Returns:
+        None. Name years and sequence positions follow birth chronology.
+
+    Examples:
+        pytest tests/test_tracker.py -k naming_uses_birth_date
+    """
+    tracker = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="synthetic"
+    )
+    tracker.advance(
+        _batch(
+            _START,
+            (_unnamed_component(_START, 1, west=-80, east=-40, order_digest="f" * 32),),
+        )
+    )
+    next_day = _START + timedelta(days=1)
+    output = tracker.advance(
+        _batch(
+            next_day,
+            (
+                _component(next_day, 1, west=-80, east=-40, order_digest="a" * 32),
+                _component(next_day, 2, west=40, east=80, order_digest="0" * 32),
+            ),
+        )
+    )
+    records = sorted(output.current, key=lambda record: record.start_date)
+    assert records[0].name == f"{name_at_ordinal(0)} 2023"
+    assert records[1].name == f"{name_at_ordinal(1)} 2024"
+    assert output.checkpoint.next_name_ordinal == 2
+
+
+@pytest.mark.unit
+def test_full_birth_digest_orders_names_independently_of_permanent_ids() -> None:
+    """Use the full suffix for a tie in the original eight-character prefix.
+
+    Args:
+        None.
+
+    Returns:
+        None. Opposite cell-ID and birth-digest orders assign names by the latter.
+
+    Examples:
+        pytest tests/test_tracker.py -k full_birth_digest_orders_names
+    """
+    first, second = sorted(
+        (
+            _component(_START, 1, west=-80, east=-40),
+            _component(_START, 2, west=40, east=80),
+        ),
+        key=lambda component: component.component_id,
+    )
+    first = replace(first, order_digest="01234567" + "f" * 24)
+    second = replace(second, order_digest="01234567" + "0" * 24)
+    output = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="synthetic"
+    ).advance(_batch(_START, (first, second)))
+    records = {record.component_id: record for record in output.current}
+    assert records[first.component_id].name == f"{name_at_ordinal(1)} 2023"
+    assert records[second.component_id].name == f"{name_at_ordinal(0)} 2023"
+    assert output.checkpoint.next_name_ordinal == 2
+
+
+@pytest.mark.unit
+def test_split_and_merge_keep_each_wave_birth_order_and_name() -> None:
+    """Keep survivor naming facts while a split child gets its own birth order.
+
+    Args:
+        None.
+
+    Returns:
+        None. A merge retains the survivor name and ending child state without
+        consuming another name or transferring the child's name.
+
+    Examples:
+        pytest tests/test_tracker.py -k split_and_merge_keep_each_wave_birth_order
+    """
+    tracker = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="synthetic"
+    )
+    opening = tracker.advance(
+        _batch(_START, (_component(_START, 1, order_digest="f" * 32),))
+    )
+    second_day = _START + timedelta(days=1)
+    split = tracker.advance(
+        _batch(
+            second_day,
+            (
+                _component(second_day, 1, west=-20, east=5, order_digest="b" * 32),
+                _component(second_day, 2, west=5, east=20, order_digest="0" * 32),
+            ),
+        )
+    )
+    survivor = next(record for record in split.current if record.continues)
+    child = next(record for record in split.current if not record.continues)
+    assert survivor.birth_order_digest == "f" * 32
+    assert survivor.name == opening.current[0].name
+    assert child.birth_order_digest == "0" * 32
+    assert child.name == f"{name_at_ordinal(1)} 2024"
+    assert child.name != survivor.name
+    third_day = second_day + timedelta(days=1)
+    merged = WaveTracker(
+        series=_SERIES,
+        requested_start=third_day,
+        source_identity="synthetic",
+        prior_checkpoint=WaveTrackerCheckpoint.from_bytes(split.checkpoint.to_bytes()),
+    ).advance(_batch(third_day, (_component(third_day, 1, order_digest="a" * 32),)))
+    assert merged.current[0].birth_order_digest == survivor.birth_order_digest
+    assert merged.current[0].name == survivor.name
+    assert merged.ended[0].final_record.birth_order_digest == child.birth_order_digest
+    assert merged.ended[0].final_record.name == child.name
+    assert merged.checkpoint.next_name_ordinal == 2
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("field", ["order_digest", "birth_order_digest"])
+@pytest.mark.parametrize(
+    "mutation", ["missing", "null", "short", "uppercase", "number"]
+)
+def test_checkpoint_requires_complete_daily_and_birth_order_digests(
+    field: str, mutation: str
+) -> None:
+    """Reject missing ordering state instead of deriving it from a later shape.
+
+    Args:
+        field: Required daily or retained birth ordering field.
+        mutation: Missing value or malformed value to place in the saved record.
+
+    Returns:
+        None. Resume reports the specific rejected field.
+
+    Examples:
+        pytest tests/test_tracker.py -k requires_complete_daily_and_birth_order
+    """
+    output = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="synthetic"
+    ).advance(_batch(_START, (_component(_START, 1),)))
+    document = json.loads(output.checkpoint.to_bytes())
+    if mutation == "missing":
+        del document["active"][0][field]
+    else:
+        document["active"][0][field] = {
+            "null": None,
+            "short": "a" * 31,
+            "uppercase": "A" * 32,
+            "number": 7,
+        }[mutation]
+    with pytest.raises(WaveTrackerError, match=field):
+        WaveTrackerCheckpoint.from_bytes(json.dumps(document).encode())
+
+
+@pytest.mark.unit
+def test_checkpoint_rejects_birth_order_that_disagrees_with_birth_component() -> None:
+    """Require a newborn wave to retain its actual first-day ordering digest.
+
+    Args:
+        None.
+
+    Returns:
+        None. A structurally valid replacement digest still cannot alter birth state.
+
+    Examples:
+        pytest tests/test_tracker.py -k disagrees_with_birth_component
+    """
+    output = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="synthetic"
+    ).advance(_batch(_START, (_component(_START, 1),)))
+    document = json.loads(output.checkpoint.to_bytes())
+    document["active"][0]["birth_order_digest"] = "e" * 32
+    with pytest.raises(WaveTrackerError, match="birth component"):
+        WaveTrackerCheckpoint.from_bytes(json.dumps(document).encode())
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("record_kind", ["current", "ended"])
+def test_saved_batch_rejects_birth_order_that_disagrees_with_birth_component(
+    record_kind: str,
+) -> None:
+    """Reject changed birth ordering in saved active records and final endings.
+
+    Args:
+        record_kind: Saved active record or final ending record to corrupt.
+
+    Returns:
+        None. A full but incorrect birth digest is rejected during decoding.
+
+    Examples:
+        pytest tests/test_tracker.py -k saved_batch_rejects_birth_order
+
+    Steps:
+        1. Track a valid newborn wave and optionally end it the following day.
+        2. Replace its birth ordering with a different complete digest.
+        3. Require saved-batch decoding to reject that inconsistent record.
+    """
+    tracker = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="synthetic"
+    )
+    output = tracker.advance(
+        _batch(_START, (_component(_START, 1, order_digest="1" * 32),))
+    )
+    if record_kind == "ended":
+        output = tracker.advance(_batch(_START + timedelta(days=1), ()))
+    document = json.loads(output.to_bytes())
+    record = (
+        document["current"][0]
+        if record_kind == "current"
+        else document["ended"][0]["record"]
+    )
+    record["birth_order_digest"] = "2" * 32
+    with pytest.raises(WaveTrackerError, match="cannot be restored") as error:
+        WaveTrackingBatch.from_bytes(json.dumps(document).encode(), output.checkpoint)
+    assert isinstance(error.value.__cause__, WaveTrackerError)
+    assert "birth component" in str(error.value.__cause__)
+
+
+@pytest.mark.unit
+def test_checkpoint_rejects_duplicate_full_birth_ordering_keys() -> None:
+    """Reject two active waves claiming the same birth date and full digest.
+
+    Args:
+        None.
+
+    Returns:
+        None. Valid but duplicated retained ordering state prevents resume.
+
+    Examples:
+        pytest tests/test_tracker.py -k duplicate_full_birth_ordering_keys
+    """
+    tracker = WaveTracker(
+        series=_SERIES, requested_start=_START, source_identity="synthetic"
+    )
+    tracker.advance(
+        _batch(
+            _START,
+            (
+                _component(_START, 1, west=-80, east=-40, order_digest="0" * 32),
+                _component(_START, 2, west=40, east=80, order_digest="f" * 32),
+            ),
+        )
+    )
+    next_day = _START + timedelta(days=1)
+    output = tracker.advance(
+        _batch(
+            next_day,
+            (
+                _component(next_day, 1, west=-80, east=-40, order_digest="a" * 32),
+                _component(next_day, 2, west=40, east=80, order_digest="b" * 32),
+            ),
+        )
+    )
+    document = json.loads(output.checkpoint.to_bytes())
+    document["active"][1]["birth_order_digest"] = document["active"][0][
+        "birth_order_digest"
+    ]
+    with pytest.raises(WaveTrackerError, match="unique birth ordering keys"):
+        WaveTrackerCheckpoint.from_bytes(json.dumps(document).encode())

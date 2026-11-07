@@ -25,12 +25,12 @@ from ._wave_tracking import (
 from .components import (
     ComponentMembership,
     DailyWaveComponentGeometry,
+    _is_order_digest,
 )
 from .naming import (
-    DEFAULT_NAMES_SEED,
     NAME_AREA_THRESHOLD_KM2,
-    _NameSequence,
-    load_name_library,
+    NameSequence,
+    StormNamingError,
 )
 from .series import WaveSeries
 
@@ -478,7 +478,7 @@ class WaveTracker:
             1. Check the selected series, first expected date and input location identity.
             2. If resuming, check the saved state and require its next date, series and source to match.
             3. Keep the original run start and accepted checkpoint, or start with empty state.
-            4. Prepare reusable shape checks and the naming sequence.
+            4. Prepare reusable shape checks and the independent packaged name sequence.
 
         Args:
             series: Temperature and direction to track.
@@ -526,7 +526,7 @@ class WaveTracker:
         self._series = series
         self._checkpoint = prior_checkpoint
         self._geometry_validator = _ComponentGeometryValidator()
-        self._name_sequence = _NameSequence(load_name_library(), DEFAULT_NAMES_SEED)
+        self._name_sequence = NameSequence()
 
     @property
     def checkpoint(self) -> WaveTrackerCheckpoint | None:
@@ -596,7 +596,7 @@ class WaveTracker:
             1. Require the next consecutive date and the tracker's selected series.
             2. Take active wave records and the next unused name position from the preceding checkpoint.
             3. Match today's footprints to the preceding records and calculate continuations, splits and merges.
-            4. Keep existing names and assign new names in start-date/ID order when peak qualifying area reaches the naming threshold.
+            4. Keep existing names and assign newly qualifying storms in birth-date and full birth-footprint-digest order.
             5. Save active records and the updated name position as today's checkpoint.
             6. Release checks for shapes no longer active and return sorted records, endings and relationships.
 
@@ -629,20 +629,24 @@ class WaveTracker:
             prior_names = {record.wave_id: record.name for record in previous}
             named = {}
             for record in sorted(
-                update.current, key=lambda record: (record.start_date, record.wave_id)
+                update.current,
+                key=lambda record: (record.start_date, record.birth_order_digest),
             ):
                 name = prior_names.get(record.wave_id)
                 if (
                     name is None
                     and record.peak_qualified_area >= NAME_AREA_THRESHOLD_KM2
                 ):
+                    # Historical keys used the first eight digest characters.
+                    # The complete digest keeps every distinct-prefix order and
+                    # supplies a fixed suffix order for a future prefix tie.
                     name = (
                         f"{self._name_sequence.name_at_ordinal(ordinal)} "
                         f"{str(record.start_date)[:4]}"
                     )
                     ordinal += 1
                 named[record.wave_id] = replace(record, name=name)
-        except WaveTrackingError as error:
+        except (WaveTrackingError, StormNamingError) as error:
             raise WaveTrackerError(
                 "component batch cannot produce valid tracker state for "
                 f"{batch.date.isoformat()} {self._series.temperature}/"
@@ -1001,8 +1005,11 @@ def _record_payload(record: TrackedWaveComponent) -> dict[str, object]:
     geometry = record.component.geometry
     return {
         "component_id": record.component_id,
+        "order_digest": record.component.order_digest,
         "wave_id": record.wave_id,
         "start_date": _day_string(record.start_date),
+        "birth_cell_id": record.birth_cell_id,
+        "birth_order_digest": record.birth_order_digest,
         "peak_qualified_area": record.peak_qualified_area,
         "peak_date": _day_string(record.peak_date),
         "continues": record.continues,
@@ -1024,13 +1031,14 @@ def _record_payload(record: TrackedWaveComponent) -> dict[str, object]:
 
 
 def _record_from_payload(value: object, series: WaveSeries) -> TrackedWaveComponent:
-    """Decode one complete active record from a checkpoint JSON object.
+    """Decode one complete record from a checkpoint or saved daily batch.
 
     Steps:
         1. Require a record object with component fields and a text list of parent IDs.
         2. Restore component dates, labels, exact shapes and area measurements.
         3. Require the saved name field, accepting either nonblank text or no name.
-        4. Restore the wave identity, start, peak and continuation fields without changing stored order.
+        4. Check that a first-day record retains its daily ordering as birth ordering.
+        5. Restore the wave identity, start, peak and continuation fields without changing stored order.
 
     Args:
         value: Candidate active-record object.
@@ -1060,6 +1068,7 @@ def _record_from_payload(value: object, series: WaveSeries) -> TrackedWaveCompon
         raise WaveTrackerError(msg)
     component = ComponentMembership(
         component_id=_string_field(value, "component_id"),
+        order_digest=_order_digest_field(value, "order_digest"),
         geometry=DailyWaveComponentGeometry(
             time=np.datetime64(_string_field(component_data, "time"), "D"),
             label=_integer_field(component_data, "label"),
@@ -1082,12 +1091,25 @@ def _record_from_payload(value: object, series: WaveSeries) -> TrackedWaveCompon
     if name is not None and (not isinstance(name, str) or not name.strip()):
         msg = "tracker checkpoint name must be nonblank text or None"
         raise WaveTrackerError(msg)
+    start_date = np.datetime64(_string_field(value, "start_date"), "D")
+    birth_order_digest = _order_digest_field(value, "birth_order_digest")
+    # The first day's two ordering fields describe the same footprint. Later
+    # days can differ because the wave moved, so keep their saved birth order.
+    if (
+        start_date == component.geometry.time
+        and birth_order_digest != component.order_digest
+    ):
+        raise WaveTrackerError(
+            "saved birth_order_digest must match the birth component order_digest"
+        )
     return TrackedWaveComponent(
         series=series,
         component=component,
         component_id=component.component_id,
         wave_id=_string_field(value, "wave_id"),
-        start_date=np.datetime64(_string_field(value, "start_date"), "D"),
+        start_date=start_date,
+        birth_cell_id=_integer_field(value, "birth_cell_id"),
+        birth_order_digest=birth_order_digest,
         peak_qualified_area=_float_field(value, "peak_qualified_area"),
         peak_date=np.datetime64(_string_field(value, "peak_date"), "D"),
         continues=_boolean_field(value, "continues"),
@@ -1095,6 +1117,30 @@ def _record_from_payload(value: object, series: WaveSeries) -> TrackedWaveCompon
         parent_wave_ids=tuple(parent_ids),
         name=name,
     )
+
+
+def _order_digest_field(payload: dict[object, object], name: str) -> str:
+    """Require one complete saved ordering digest without rebuilding geometry.
+
+    Args:
+        payload: Saved active-record fields.
+        name: Required daily or birth ordering field.
+
+    Returns:
+        The unchanged 32-character lowercase hexadecimal digest.
+
+    Raises:
+        WaveTrackerError: If the field is absent or malformed.
+
+    Examples:
+        digest = _order_digest_field(saved_record, "birth_order_digest")
+    """
+    value = _string_field(payload, name)
+    if not _is_order_digest(value):
+        raise WaveTrackerError(
+            f"tracker checkpoint {name} must be a 32-character lowercase footprint digest"
+        )
+    return value
 
 
 def _geometry_payload(value: Geometry | None) -> str | None:

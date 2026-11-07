@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from reuters_temperature_storms import NameSequence
 from reuters_temperature_storms import naming as naming_module
 from reuters_temperature_storms.naming import (
     DEFAULT_NAMES_SEED,
@@ -99,7 +100,7 @@ def test_library_constructor_checks_schema_and_buckets_once(monkeypatch):
     monkeypatch.setattr(NameLibrary, "validate", check_library)
     library = NameLibrary.read_csv()
     assert calls == {"schema": 1, "library": 1}
-    sequence = naming_module._NameSequence(library, DEFAULT_NAMES_SEED)
+    sequence = naming_module.NameSequence(library, DEFAULT_NAMES_SEED)
     names = [sequence.next_name() for _ in range(5000)]
     digest = hashlib.sha256(
         json.dumps(names, separators=(",", ":")).encode()
@@ -258,7 +259,7 @@ def test_ordinal_lookup_cycles_each_bucket_without_advancing() -> None:
     entries = _small_library().entries + (NameLibraryEntry("Africa", "F", "second", 1),)
     library = NameLibrary(entries, _GROUPS, _GEOGRAPHIES, _GENDERS)
 
-    sequence = naming_module._NameSequence(library, DEFAULT_NAMES_SEED)
+    sequence = naming_module.NameSequence(library, DEFAULT_NAMES_SEED)
     ordinal = next(
         index
         for index in range(130)
@@ -462,14 +463,35 @@ def test_stateful_sequence_matches_ordinal_lookup_across_complete_cycles() -> No
     Steps:
         1. The chronological sequence preserves every reviewed ordinal name.
     """
-    from reuters_temperature_storms.naming import _NameSequence
+    from reuters_temperature_storms.naming import NameSequence
 
     library = load_name_library()
-    sequence = _NameSequence(library, DEFAULT_NAMES_SEED)
-    expected = _NameSequence(library, DEFAULT_NAMES_SEED)
+    sequence = NameSequence(library, DEFAULT_NAMES_SEED)
+    expected = NameSequence(library, DEFAULT_NAMES_SEED)
     for ordinal in range(5_000):
         assert sequence.next_name() == expected.name_at_ordinal(ordinal)
     assert sequence.name_at_ordinal(0) == "Uriel"
+
+
+def test_public_name_sequence_defaults_need_no_weather_or_tracker_inputs() -> None:
+    """Start the fixed published name sequence through its independent public API.
+
+    Args:
+        None.
+
+    Returns:
+        None. Default and restarted sequences preserve the original first names
+        and selected story-name positions without tracking state.
+
+    Examples:
+        pytest tests/test_naming.py -k public_name_sequence_defaults
+    """
+    sequence = NameSequence()
+    assert [sequence.next_name() for _ in range(3)] == ["Uriel", "Yvonne", "Helmut"]
+    assert sequence.name_at_ordinal(2300) == "Stacy"
+    assert sequence.name_at_ordinal(2323) == "Mahesh"
+    assert sequence.name_at_ordinal(2480) == "Raimundo"
+    assert NameSequence().next_name() == "Uriel"
 
 
 @pytest.mark.unit
@@ -581,12 +603,12 @@ def test_rebuilt_target_storm_names(ordinal: int, expected: str) -> None:
         2. Compare the next draw, stateless lookup, and a fresh picker lookup with the expected name.
     """
     library = load_name_library()
-    sequence = naming_module._NameSequence(library, DEFAULT_NAMES_SEED)
+    sequence = naming_module.NameSequence(library, DEFAULT_NAMES_SEED)
     for _ in range(ordinal):
         sequence.next_name()
     assert sequence.next_name() == expected
     assert name_at_ordinal(ordinal, library=library) == expected
-    restarted = naming_module._NameSequence(library, DEFAULT_NAMES_SEED)
+    restarted = naming_module.NameSequence(library, DEFAULT_NAMES_SEED)
     assert restarted.name_at_ordinal(ordinal) == expected
 
 
@@ -608,7 +630,7 @@ def test_seeded_rotations_preserve_category_balance(seed: int) -> None:
         1. Generate four complete category cycles using the parametrized seed.
         2. Check each 130-entry cycle contains every category combination and the expected group, geography, and gender counts.
     """
-    sequence = naming_module._NameSequence(_small_library(), seed)
+    sequence = naming_module.NameSequence(_small_library(), seed)
     categories = [sequence.next_name().split("-") for _ in range(520)]
     for start in range(0, 520, 130):
         cycle = categories[start : start + 130]

@@ -113,12 +113,45 @@ def _values(frame: pd.DataFrame | pd.Series) -> list[dict[str, object]] | list[o
     return [scalar(value) for value in frame.tolist()]
 
 
-_IDS = tuple(f"20240101-{number:08x}" for number in range(1, 20))
+_IDS = tuple(f"20240101-{number:032x}" for number in range(1, 20))
 _SERIES = WaveSeries("tasmax", "warm")
 _CROSS_YEAR_IDS = tuple(
-    f"{('20250101' if number == 12 else '20241231')}-{number:08x}"
+    f"{('20250101' if number == 12 else '20241231')}-{number:032x}"
     for number in range(1, 20)
 )
+
+
+@pytest.mark.component
+def test_readers_distinguish_keys_with_the_same_short_prefix(tmp_path: Path) -> None:
+    """Select different full digests even when their first eight digits match.
+
+    Args:
+        tmp_path: Private generation directory supplied by pytest.
+
+    Returns:
+        None. Each filter returns only its selected permanent wave.
+
+    Examples:
+        Run pytest tests/test_records.py -k same_short_prefix.
+
+    Steps:
+        1. Write two distinct keys sharing the formerly shortened suffix.
+        2. Select each complete key through the public catalog reader.
+        3. Reject an old shortened key as an invalid selection.
+    """
+    first, second = _CROSS_YEAR_IDS[:2]
+    assert first[:17] == second[:17]
+    write_generation(
+        _batches(),
+        destination=tmp_path / "generation",
+        generation_id="full-digest-selection",
+        completion=_completion("full-digest-selection"),
+    )
+    generation = open_completed_generation(tmp_path / "generation")
+    for key in (first, second):
+        assert scan_waves(generation, wave_ids=[key])["wave_id"].tolist() == [key]
+    with pytest.raises(WaveRecordStorageError, match="full-digest"):
+        scan_waves(generation, wave_ids=[first[:17]])
 
 
 @pytest.mark.component
@@ -199,7 +232,7 @@ def test_readers_close_files_before_returning_dataframes(
     assert len(scan_waves(generation, active=False)) == 4
     for empty in (
         scan_waves(generation, wave_ids=[]),
-        scan_waves(generation, wave_ids=["20300101-ffffffff"]),
+        scan_waves(generation, wave_ids=["20300101-000000000000000000000000ffffffff"]),
     ):
         assert len(empty) == 0
         assert isinstance(empty, gpd.GeoDataFrame)
@@ -301,13 +334,19 @@ def _record(
         area_gap_filled=0.0,
         qualified_fraction=1.0,
     )
-    membership = ComponentMembership(component_id=component_id, geometry=daily)
+    membership = ComponentMembership(
+        component_id=component_id, geometry=daily, order_digest=component_id
+    )
     return TrackedWaveComponent(
         series=series,
         component=membership,
         component_id=component_id,
         wave_id=wave_id,
         start_date=np.datetime64(start or day, "D"),
+        birth_cell_id=0,
+        birth_order_digest=component_id
+        if start is None or start == day
+        else f"{int(wave_id.split('-')[-1], 16):032x}",
         peak_qualified_area=2.0,
         peak_date=np.datetime64(day, "D"),
         continues=start is not None,
@@ -411,11 +450,11 @@ _LINEAGE_BRANCH = _SERIES
 _LINEAGE_DAY_1 = date(2025, 1, 5)
 _LINEAGE_DAY_2 = date(2025, 1, 6)
 _LINEAGE_DAY_3 = date(2025, 1, 7)
-_PARENT = "20250105-00000002"
-_CHILD_A = "20250107-00000003"
-_CHILD_B = "20250107-00000004"
-_ABSORBED = "20250105-00000005"
-_KEEPER = "20250105-00000006"
+_PARENT = "20250105-00000000000000000000000000000002"
+_CHILD_A = "20250107-00000000000000000000000000000003"
+_CHILD_B = "20250107-00000000000000000000000000000004"
+_ABSORBED = "20250105-00000000000000000000000000000005"
+_KEEPER = "20250105-00000000000000000000000000000006"
 
 
 def _lineage_completion(generation_id: str) -> CompletionContext:
@@ -894,7 +933,7 @@ def test_chronological_assembly_flushes_underfull_historical_partitions(
         current = start
         while current <= end:
             if current.month == 1 and current.day == 1:
-                year_id = f"{current.year}0101-{3000 - current.year:08x}"
+                year_id = f"{current.year}0101-{3000 - current.year:032x}"
                 yield _batch(
                     current,
                     (_record(_SERIES, current, year_id, f"{current.year + 10:064x}"),),
@@ -909,7 +948,7 @@ def test_chronological_assembly_flushes_underfull_historical_partitions(
                             _record(
                                 _SERIES,
                                 previous,
-                                f"{previous.year}0101-{3000 - previous.year:08x}",
+                                f"{previous.year}0101-{3000 - previous.year:032x}",
                                 f"{previous.year + 10:064x}",
                             ),
                             np.datetime64(previous, "D"),
@@ -1071,7 +1110,7 @@ def test_split_source_that_keeps_running_is_still_accepted(tmp_path) -> None:
     Examples:
         Run ``pytest tests/test_records.py -k split_source_that_keeps_running_is_still_accepted``.
     """
-    child_key = "20250106-00000003"
+    child_key = "20250106-00000000000000000000000000000003"
     parent_day_one = _record(
         _LINEAGE_BRANCH, _LINEAGE_DAY_1, _PARENT, _IDS[8], geometry=box(0, 0, 5, 1)
     )
@@ -1134,7 +1173,7 @@ def test_merge_target_may_be_new_on_the_event_date(tmp_path) -> None:
     Examples:
         Run ``pytest tests/test_records.py -k merge_target_may_be_new_on_the_event_date``.
     """
-    target_key = "20250106-00000006"
+    target_key = "20250106-00000000000000000000000000000006"
     absorbed = _record(
         _LINEAGE_BRANCH, _LINEAGE_DAY_1, _ABSORBED, _IDS[8], geometry=box(0, 0, 5, 1)
     )
@@ -1448,11 +1487,13 @@ def test_catalog_omits_zero_peak_and_retains_daily_records(tmp_path) -> None:
             ),
         ),
     )
-    born_later = _record(_SERIES, second, "20240102-00000002", _IDS[5])
+    born_later = _record(
+        _SERIES, second, "20240102-00000000000000000000000000000002", _IDS[5]
+    )
     born_later = replace(born_later, name="Test 2024")
     active_provisional = replace(
         provisional,
-        wave_id="20240102-00000003",
+        wave_id="20240102-00000000000000000000000000000003",
         start_date=second,
         peak_date=second,
         component_id="00000000000000000000000000000007",

@@ -154,7 +154,7 @@ class FootprintTask:
             existing = WaveFootprints.read_parquet(
                 output_path, filesystem=destination._filesystem
             )
-            existing.to_components(self.day, self.series)
+            existing.validate_day(self.day, self.series)
             return FootprintResult(
                 self.day,
                 len(existing.frame),
@@ -392,7 +392,7 @@ class FootprintRun:
                 footprints = WaveFootprints.read_parquet(
                     path, filesystem=self.destination._filesystem
                 )
-                footprints.to_components(task.day, self.series)
+                footprints.validate_day(task.day, self.series)
             except FileNotFoundError:
                 missing.append(task.day)
             except (ValueError, OSError) as error:

@@ -10,6 +10,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .footprints import WaveFootprintSource
 from .records import (
     CompletionContext,
     CompletionEvidence,
@@ -46,6 +47,29 @@ class WaveRunnerError(ValueError):
     Examples:
         raise WaveRunnerError("invalid input")
     """
+
+
+def _input_identity(source: WaveSource) -> str:
+    """Describe all configured inputs in the existing saved request field.
+
+    Args:
+        source: Daily cell source or prepared shapes with a cell companion.
+
+    Returns:
+        The original source location for cell-only input, or both explicit
+        locations for prepared shapes. Changing either source then prevents
+        resuming state calculated from a different complete daily input.
+
+    Examples:
+        ``_input_identity(WaveCellSource("./cells"))`` returns ``"./cells"``.
+    """
+    if not isinstance(source, WaveFootprintSource) or source.cell_source is None:
+        return source.location
+    return json.dumps(
+        {"footprints": source.location, "cells": source.cell_source.location},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def run_waves(
@@ -99,8 +123,10 @@ def run_waves(
         ValueError: If input footprints or scientific records are invalid.
 
     Examples:
-        result = run_waves(WaveFootprintSource("./footprints"), date(1960, 1, 1),
-                            date(1960, 1, 6), "./wave-results")
+        source = WaveFootprintSource(
+            "./footprints", cell_source=WaveCellSource("./cells")
+        )
+        result = run_waves(source, date(1960, 1, 1), date(1960, 1, 6), "./wave-results")
     """
     for value in (start_date, end_date):
         if not isinstance(value, date) or isinstance(value, datetime):
@@ -127,8 +153,9 @@ def run_waves(
     state.mkdir(parents=True, exist_ok=True)
     batches = state / "batches"
     batches.mkdir(exist_ok=True)
+    source_identity = _input_identity(source)
     typed_request = WaveRunRequest(
-        source.location,
+        source_identity,
         start_date,
         end_date,
         series,
@@ -159,7 +186,7 @@ def run_waves(
     if checkpoint is not None and (
         checkpoint.requested_start != start_date
         or checkpoint.through_date > end_date
-        or checkpoint.source_identity != source.location
+        or checkpoint.source_identity != source_identity
         or checkpoint.series != series
     ):
         raise WaveRunnerError("restart checkpoint does not match the original request")
@@ -190,7 +217,7 @@ def run_waves(
     next_day = start_date if checkpoint is None else checkpoint.next_date
     tracker = WaveTracker(
         requested_start=next_day,
-        source_identity=source.location,
+        source_identity=source_identity,
         prior_checkpoint=checkpoint,
         series=series,
     )
