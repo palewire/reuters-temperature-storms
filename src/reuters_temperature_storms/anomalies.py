@@ -367,7 +367,7 @@ class MeasurementGrid:
                 self.schema.validate(self.frame)
             else:
                 self.region.validate(self.schema, self.frame)
-        except (SchemaError, SchemaErrors) as error:
+        except (SchemaError, SchemaErrors, AnomalyError) as error:
             raise AnomalyError(f"invalid {type(self).__name__}: {error}") from error
         if "date" in self.frame:
             if not self.frame["date"].eq(pd.Timestamp(self.day)).all():
@@ -485,10 +485,11 @@ class DailyAnomalyBuilder:
             seasonal: Matching adjusted means and percentiles.
 
         Returns:
-            Complete float64 daily anomaly grid, readable by ScoreRun.
+            Complete float64 daily anomaly grid. Global results are readable by
+            ScoreRun; regional results stop at this stage.
 
         Raises:
-            AnomalyError: If dates, coordinates, ordering or scales are invalid.
+            AnomalyError: If dates, regions, coordinates, ordering or scales are invalid.
 
         Examples:
             output = DailyAnomalyBuilder().build(daily, normal, seasonal)
