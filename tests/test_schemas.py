@@ -19,9 +19,47 @@ from reuters_temperature_storms.schemas import (
     WaveFootprintSchema,
 )
 
-WAVE = "20200101-01234567"
-OTHER_WAVE = "20200102-89abcdef"
+WAVE = "20200101-00000000000000000000000001234567"
+OTHER_WAVE = "20200102-00000000000000000000000089abcdef"
 COMPONENT = "0123456789abcdef0123456789abcdef"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "20200101-01234567",
+        "20200101-" + "a" * 31,
+        "20200101-" + "a" * 33,
+        "20200101-" + "A" * 32,
+        WAVE + "extra",
+    ],
+)
+@pytest.mark.parametrize("column", ["wave_id", "parent_wave_ids", "parent_keys"])
+def test_wave_schema_rejects_shortened_or_malformed_keys(key: str, column: str) -> None:
+    """Require the complete digest rather than accepting a matching prefix.
+
+    Args:
+        key: Shortened, incorrectly sized, uppercase or suffixed identity.
+        column: Permanent identity or parent-list field to check.
+
+    Returns:
+        None. Pandera rejects each invalid complete identity.
+
+    Examples:
+        Run pytest tests/test_schemas.py -k shortened_or_malformed_keys.
+
+    Steps:
+        1. Replace the valid daily wave identity with the supplied invalid key.
+        2. Require the shared full-digest schema to reject the changed row.
+    """
+    frame = _wave_days()
+    if column == "wave_id":
+        frame[column] = key
+    else:
+        frame.at[0, column] = [key]
+    check = "str_matches" if column == "wave_id" else "wave_id_lists"
+    with pytest.raises(SchemaError, match=check):
+        WaveDayFileSchema.validate(frame)
 
 
 def _dates(values):

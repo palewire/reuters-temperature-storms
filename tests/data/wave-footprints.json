@@ -33,7 +33,7 @@
       ],
       "expected": [
         {
-          "storm_id": "21a4fd336962d0da2a14fb39d099ca21",
+          "storm_id": "b475234e24c9bd1afb4350baf4b9416c",
           "area_qualified": 769.3164110181661,
           "area_grace": 769.3164110181658,
           "area_gap_filled": 769.3164110181663,
@@ -49,7 +49,7 @@
           }
         },
         {
-          "storm_id": "7eb54864d6d63558ded064962655b011",
+          "storm_id": "e54541adf4fd06961542b34045aa1e62",
           "area_qualified": 0.0,
           "area_grace": 769.2023772141538,
           "area_gap_filled": 0.0,
@@ -85,7 +85,7 @@
       ],
       "expected": [
         {
-          "storm_id": "b3428bafd583f80083515084fcaca19d",
+          "storm_id": "39a59d545502061a25168ae17aee0b94",
           "area_qualified": 769.3164110182494,
           "area_grace": 769.3164110181306,
           "area_gap_filled": 769.3164110181306,
@@ -132,7 +132,8 @@
           },
           "buffer_geometry": {
             "wkt": "POLYGON ((-180 -0.125, 180 -0.125, 180 0.375, 179.875 0.375, 179.875 0.125, -179.875 0.125, -179.875 0.375, -180 0.375, -180 -0.125))"
-          }
+          },
+          "storm_id": "39a59d545502061a25168ae17aee0b94"
         }
       ]
     }

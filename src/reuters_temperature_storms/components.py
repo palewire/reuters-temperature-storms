@@ -62,13 +62,23 @@ class ComponentMembership:
     Args:
         component_id: Identifier of the supplied daily component.
         geometry: Daily geometry and role-area record for the component.
+        order_digest: Full date-and-shape digest used to order daily
+            tracking decisions. It is separate from the permanent cell ID.
+        input_id: Original file-row identifier, when the component came from a
+            prepared input file. It does not participate in tracking decisions.
 
     Examples:
-        component = ComponentMembership("daily-component", geometry)
+        component = ComponentMembership("daily-component", geometry, order_digest)
     """
 
+    #: Daily identity derived from the calendar date and first occupied cell.
     component_id: str
+    #: Finished role shapes and physical measurements for this component.
     geometry: DailyWaveComponentGeometry
+    #: Daily footprint order, computed once from its complete native cell roles.
+    order_digest: str
+    #: Original prepared-file label retained for associated cell joins.
+    input_id: str | None = None
 
 
 def _relative_difference(stated: float, measured: float) -> float:

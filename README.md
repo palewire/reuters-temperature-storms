@@ -10,6 +10,4 @@ For the Reuters analysis, temperature readings were drawn from the [ERA5 reanaly
 
 Using different temperature readings and baseline climatologies will lead to differing results. Additionally, small differences in computer architecture may affect temperature readings and percentile scores by very small amounts.
 
-The storm names assigned by Reuters are generated using a lottery system with a seeded value so that the results are reproducible. On some computer systems, the seed may not reliably return the same name list. In such a circumstance, you can refer to the table of storms and the names we use in our stories and visualizations, which is included in the repository.
-
 If you have questions about the code or data, you're encouraged to contact [Ben Welsh](mailto:ben.welsh@thomsonreuters.com) and [Maurice Tamman](mailto:maurice.tamman@reuters.com) at Reuters.
