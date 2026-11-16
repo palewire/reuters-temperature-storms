@@ -17,9 +17,9 @@ from .components import (
     _ROLE_AREA_RELATIVE_TOLERANCE,
     ComponentMembership,
     DailyWaveComponentGeometry,
-    _is_order_digest,
     _relative_difference,
 )
+from .footprint_order import is_order_digest
 from .identity import (
     WAVE_ID_PATTERN,
     CellIdentity,
@@ -145,7 +145,7 @@ class TrackedWaveComponent:
         Examples:
             ``record.validate_birth_order("previous")`` checks a resumed wave.
         """
-        if not _is_order_digest(self.birth_order_digest):
+        if not is_order_digest(self.birth_order_digest):
             raise WaveTrackingError(
                 f"{subject} birth_order_digest must be a 32-character lowercase footprint digest"
             )
@@ -572,7 +572,7 @@ def _validate_components(
         msg = "components must contain ComponentMembership records"
         raise TypeError(msg)
     for component in supplied:
-        if not _is_order_digest(component.order_digest):
+        if not is_order_digest(component.order_digest):
             raise WaveTrackingError(
                 "order_digest must be a 32-character lowercase footprint digest"
             )
@@ -649,7 +649,7 @@ def _validate_component_membership(
     ):
         msg = "component_id must be a 32-character lowercase date-and-cell digest"
         raise WaveTrackingError(msg)
-    if not _is_order_digest(component.order_digest):
+    if not is_order_digest(component.order_digest):
         raise WaveTrackingError(
             "order_digest must be a 32-character lowercase footprint digest"
         )

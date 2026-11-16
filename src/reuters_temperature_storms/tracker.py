@@ -25,8 +25,8 @@ from ._wave_tracking import (
 from .components import (
     ComponentMembership,
     DailyWaveComponentGeometry,
-    _is_order_digest,
 )
+from .footprint_order import is_order_digest
 from .naming import (
     NAME_AREA_THRESHOLD_KM2,
     NameSequence,
@@ -1136,7 +1136,7 @@ def _order_digest_field(payload: dict[object, object], name: str) -> str:
         digest = _order_digest_field(saved_record, "birth_order_digest")
     """
     value = _string_field(payload, name)
-    if not _is_order_digest(value):
+    if not is_order_digest(value):
         raise WaveTrackerError(
             f"tracker checkpoint {name} must be a 32-character lowercase footprint digest"
         )

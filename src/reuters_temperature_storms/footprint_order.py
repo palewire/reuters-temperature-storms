@@ -31,6 +31,25 @@ class FootprintOrderError(ValueError):
     """Raised when coverage or runtime settings cannot produce footprint ordering codes."""
 
 
+def is_order_digest(value: object) -> bool:
+    """Check the saved full footprint-order digest without rebuilding shapes.
+
+    Args:
+        value: Candidate ordering field from a component or saved tracker state.
+
+    Returns:
+        True for exactly 32 lowercase hexadecimal characters, otherwise False.
+
+    Examples:
+        ``is_order_digest("0123456789abcdef0123456789abcdef")`` returns True.
+    """
+    return (
+        isinstance(value, str)
+        and len(value) == 32
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class HistoricalFootprintOrder:
     """Calculate one whole day's footprint ordering codes from its grid cells.
