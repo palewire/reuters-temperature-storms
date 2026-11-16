@@ -1978,7 +1978,7 @@ requires-dist = [
     { name = "pyproj", specifier = ">=3.6" },
     { name = "s3fs", marker = "extra == 'aws'", specifier = ">=2026.7.0" },
     { name = "scipy", specifier = ">=1.15" },
-    { name = "shapely", specifier = ">=2.1" },
+    { name = "shapely", specifier = "==2.1.2" },
 ]
 provides-extras = ["aws"]
 

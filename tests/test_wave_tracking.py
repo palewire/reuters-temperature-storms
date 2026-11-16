@@ -30,7 +30,7 @@ from reuters_temperature_storms.components import (
     ComponentMembership,
     DailyWaveComponentGeometry,
 )
-from reuters_temperature_storms.identity import component_identity
+from reuters_temperature_storms.identity import FootprintIdentity, component_identity
 
 _AREA_TRANSFORMER = Transformer.from_crs("EPSG:4326", "EPSG:6933", always_xy=True)
 _SERIES = WaveSeries("tasmax", "warm")
@@ -65,6 +65,7 @@ def _component(
     *,
     qualified=None,
     grace=None,
+    order_digest: str | None = None,
 ) -> ComponentMembership:
     """Build a synthetic daily component with measured role areas and a geometry key.
 
@@ -74,6 +75,8 @@ def _component(
         full: Complete polygon including all component roles.
         qualified: Optional qualified polygon; defaults to the full polygon.
         grace: Optional grace-period polygon.
+        order_digest: Explicit synthetic ordering token. The component ID is
+            the default token because these test polygons are not native cells.
 
     Returns:
         Synthetic component with geometry identity and measured role areas.
@@ -106,7 +109,11 @@ def _component(
         date=day,
         geometry=full,
     )
-    return ComponentMembership(component_id, geometry)
+    return ComponentMembership(
+        component_id,
+        geometry,
+        component_id if order_digest is None else order_digest,
+    )
 
 
 def _seed(day: np.datetime64, *components: ComponentMembership):
@@ -152,9 +159,14 @@ def test_seed_ids_use_geometry_keys_and_ignore_discovery_order() -> None:
 
     assert forward.current == reverse.current
     assert all(
-        len(record.component_id) == 32 and len(record.wave_id) == 17
+        len(record.component_id) == 32 and len(record.wave_id) == 41
         for record in forward.current
     )
+    # The fixed vectors hash date plus the known first cells 519119 and 519139.
+    assert {record.wave_id for record in forward.current} == {
+        "20240101-32c596b38c0f962c549c745f65580edd",
+        "20240101-0f6cc26746ca7b71935a7cf774bfc3d8",
+    }
     assert all(record.parent_wave_ids == () for record in forward.current)
 
 
@@ -166,15 +178,15 @@ def test_continuation_retains_wave_id_and_replaces_component_id() -> None:
         None.
 
     Steps:
-        1. Seed a polygon and track the same footprint on the following day.
-        2. Check that the persistent wave identifier stays fixed while the dated component identifier changes.
+        1. Seed a polygon and move it east on the following day.
+        2. Check that its permanent identity and birth address stay fixed while today's component identity changes.
 
     Examples:
         Run ``pytest tests/test_wave_tracking.py -k continuation_retains_wave_id_and_replaces_component_id``.
     """
     first = _component(_DAY_1, 1, box(0, 0, 10, 1))
     previous = _seed(_DAY_1, first).current
-    current = _component(_DAY_2, 1, box(0, 0, 10, 1))
+    current = _component(_DAY_2, 1, box(0.25, 0, 10.25, 1))
 
     update = track_reuters_waves(
         date=_DAY_2, series=_SERIES, components=(current,), previous=previous
@@ -182,6 +194,11 @@ def test_continuation_retains_wave_id_and_replaces_component_id() -> None:
 
     assert update.current[0].wave_id == previous[0].wave_id
     assert update.current[0].component_id != previous[0].component_id
+    assert update.current[0].birth_cell_id == previous[0].birth_cell_id
+    assert (
+        update.current[0].birth_cell_id
+        != FootprintIdentity(_DAY_2, current.geometry.full_geometry).cell_id
+    )
     assert update.current[0].continues is True
     assert update.lineage == ()
 
@@ -211,6 +228,11 @@ def test_split_retains_winner_and_emits_one_explicit_edge() -> None:
     child = next(record for record in update.current if not record.continues)
 
     assert winner.wave_id == previous[0].wave_id
+    assert winner.birth_cell_id == previous[0].birth_cell_id
+    assert (
+        child.birth_cell_id
+        == FootprintIdentity(_DAY_2, small.geometry.full_geometry).cell_id
+    )
     assert child.parent_wave_ids == (previous[0].wave_id,)
     assert [
         (edge.source_wave_id, edge.target_wave_id, edge.relationship)
@@ -243,14 +265,61 @@ def test_merge_retains_winner_and_emits_loser_edge() -> None:
     )
 
     winner = update.current[0]
+    predecessor = next(
+        record for record in previous if record.wave_id == winner.wave_id
+    )
     loser = next(record for record in previous if record.wave_id != winner.wave_id)
     assert winner.parent_wave_ids == (loser.wave_id,)
+    assert winner.birth_cell_id == predecessor.birth_cell_id
+    assert update.ended[0].final_record.birth_cell_id == loser.birth_cell_id
     assert winner.parent_keys == tuple(sorted((winner.wave_id, loser.wave_id)))
     assert update.ended[0].merged_into_wave_id == winner.wave_id
     assert [
         (edge.source_wave_id, edge.target_wave_id, edge.relationship)
         for edge in update.lineage
     ] == [(loser.wave_id, winner.wave_id, "merge")]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("cell_id", [-1, 1440 * 721, True, 519120])
+def test_previous_birth_cell_must_reproduce_its_permanent_key(cell_id) -> None:
+    """Corrupted birth state stops before any continuation decisions.
+
+    Args:
+        cell_id: Missing, invalid or inconsistent saved birth address.
+
+    Returns:
+        None after the damaged predecessor is rejected.
+
+    Examples:
+        Run ``pytest tests/test_wave_tracking.py -k previous_birth_cell``.
+    """
+    previous = _seed(_DAY_1, _component(_DAY_1, 1, box(0, 0, 10, 1))).current[0]
+    with pytest.raises(WaveTrackingError, match="birth_cell_id"):
+        track_reuters_waves(
+            date=_DAY_2,
+            series=_SERIES,
+            components=(_component(_DAY_2, 1, box(0, 0, 10, 1)),),
+            previous=(replace(previous, birth_cell_id=cell_id),),
+        )
+
+
+@pytest.mark.unit
+def test_output_birth_cell_must_reproduce_its_permanent_key() -> None:
+    """An invalid birth address cannot escape the daily output check.
+
+    Args:
+        None.
+
+    Returns:
+        None after the damaged current record is rejected.
+
+    Examples:
+        Run ``pytest tests/test_wave_tracking.py -k output_birth_cell``.
+    """
+    record = _seed(_DAY_1, _component(_DAY_1, 1, box(0, 0, 10, 1))).current[0]
+    with pytest.raises(WaveTrackingError, match="birth_cell_id"):
+        _validate_output((), (replace(record, birth_cell_id=519120),), (), ())
 
 
 @pytest.mark.unit
@@ -365,7 +434,9 @@ def test_duplicate_component_id_fails_closed() -> None:
         full_geometry=box(6, 0, 10, 1),
         geometry=box(6, 0, 10, 1),
     )
-    duplicate = ComponentMembership(component.component_id, duplicate_geometry)
+    duplicate = ComponentMembership(
+        component.component_id, duplicate_geometry, component.order_digest
+    )
 
     with pytest.raises(WaveTrackingError, match="component IDs"):
         _seed(_DAY_1, component, duplicate)
@@ -1045,8 +1116,8 @@ def test_same_day_spatial_index_reduces_intersection_calls_for_separated_compone
 
 
 @pytest.mark.unit
-def test_merge_tie_uses_previous_daily_footprint_id() -> None:
-    """Break an equal-overlap merge by the previous daily ID, not birth key.
+def test_merge_tie_uses_previous_daily_footprint_digest() -> None:
+    """Break an equal-overlap merge using ordering separate from permanent IDs.
 
     Args:
         None.
@@ -1058,22 +1129,105 @@ def test_merge_tie_uses_previous_daily_footprint_id() -> None:
         ``pytest tests/test_wave_tracking.py -k merge_tie_uses``
 
     Steps:
-        1. Break an equal-overlap merge by the previous daily ID, not birth key.
-        2. Check that the survivor matches the final tie rule.
+        1. Continue two equal footprints with daily ordering opposite their cell-ID order.
+        2. Merge them and check that the daily footprint digest selects the survivor.
     """
     left = _component(_DAY_1, 1, box(0, 0, 4, 1))
     right = _component(_DAY_1, 2, box(4, 0, 8, 1))
-    previous = list(_seed(_DAY_1, left, right).current)
-    ordered = sorted(previous, key=lambda record: record.component_id)
-    previous = [
-        replace(ordered[0], wave_id="20240101-ffffffff"),
-        replace(ordered[1], wave_id="20240101-00000000"),
-    ]
-    merged = _component(_DAY_2, 1, box(0, 0, 8, 1))
-    update = track_reuters_waves(
-        date=_DAY_2, series=_SERIES, components=(merged,), previous=previous
+    previous = _seed(_DAY_1, left, right).current
+    lower_id, higher_id = sorted(
+        (
+            _component(_DAY_2, 1, box(0, 0, 4, 1)),
+            _component(_DAY_2, 2, box(4, 0, 8, 1)),
+        ),
+        key=lambda component: component.component_id,
     )
-    assert update.current[0].wave_id == "20240101-ffffffff"
+    previous = track_reuters_waves(
+        date=_DAY_2,
+        series=_SERIES,
+        components=(
+            replace(lower_id, order_digest="f" * 32),
+            replace(higher_id, order_digest="0" * 32),
+        ),
+        previous=previous,
+    ).current
+    ordered = sorted(previous, key=lambda record: record.component.order_digest)
+    assert ordered[0].component_id == higher_id.component_id
+    merged = _component(_DAY_3, 1, box(0, 0, 8, 1))
+    update = track_reuters_waves(
+        date=_DAY_3, series=_SERIES, components=(merged,), previous=previous
+    )
+    assert update.current[0].wave_id == ordered[0].wave_id
+    assert update.current[0].birth_order_digest == ordered[0].birth_order_digest
+
+
+@pytest.mark.unit
+def test_duplicate_full_daily_ordering_digests_are_rejected() -> None:
+    """Reject distinct footprints claiming an identical complete daily order.
+
+    Args:
+        None.
+
+    Returns:
+        None. A full digest collision cannot depend on supplied row order.
+
+    Examples:
+        pytest tests/test_wave_tracking.py -k duplicate_full_daily_ordering
+    """
+    first = _component(_DAY_1, 1, box(0, 0, 4, 1), order_digest="a" * 32)
+    second = _component(_DAY_1, 2, box(4, 0, 8, 1), order_digest="a" * 32)
+    with pytest.raises(WaveTrackingError, match="ordering digests must be unique"):
+        _seed(_DAY_1, first, second)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("digest", [None, "abc", "A" * 32, 7])
+def test_daily_ordering_requires_a_complete_lowercase_digest(digest) -> None:
+    """Reject malformed supplied ordering fields before using them to sort.
+
+    Args:
+        digest: Missing, short, uppercase or nontext ordering field.
+
+    Returns:
+        None. The tracker reports the field rather than computing a replacement.
+
+    Examples:
+        pytest tests/test_wave_tracking.py -k daily_ordering_requires
+    """
+    component = _component(_DAY_1, 1, box(0, 0, 4, 1))
+    with pytest.raises(WaveTrackingError, match="order_digest"):
+        _seed(_DAY_1, replace(component, order_digest=digest))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value"), [("birth_order_digest", "e" * 32), ("name", "Changed 2024")]
+)
+def test_continued_output_cannot_change_birth_order_or_assigned_name(
+    field, value
+) -> None:
+    """Check inheritance independently of the code that constructs a continuation.
+
+    Args:
+        field: Retained birth ordering or name field to alter.
+        value: A replacement that must not overwrite preceding state.
+
+    Returns:
+        None. Output validation rejects changed continuation facts.
+
+    Examples:
+        pytest tests/test_wave_tracking.py -k continued_output_cannot_change
+    """
+    previous = _seed(_DAY_1, _component(_DAY_1, 1, box(0, 0, 4, 1))).current
+    update = track_reuters_waves(
+        date=_DAY_2,
+        series=_SERIES,
+        components=(_component(_DAY_2, 1, box(0, 0, 4, 1)),),
+        previous=previous,
+    )
+    altered = replace(update.current[0], **{field: value})
+    with pytest.raises(WaveTrackingError, match="retain their birth ordering digest"):
+        _validate_output(previous, (altered,), update.ended, update.lineage)
 
 
 @pytest.mark.unit
@@ -1156,7 +1310,13 @@ def test_exact_sixty_percent_ratio_continues_despite_display_rounding(monkeypatc
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("key", ["20250101-12345678", "20241399-12345678"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "20250101-00000000000000000000000012345678",
+        "20241399-00000000000000000000000012345678",
+    ],
+)
 def test_previous_key_requires_actual_birth_date(key):
     """Reject impossible prior permanent keys before overlap or naming decisions.
 

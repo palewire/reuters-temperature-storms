@@ -23,6 +23,7 @@ from pandera.errors import SchemaError, SchemaErrors
 
 from ._catalog import CatalogRollup
 from ._wave_tracking import EndedWave, LineageEdge
+from .identity import WAVE_ID_PATTERN
 from .schemas import (
     FileSchema,
     LineageFileSchema,
@@ -118,7 +119,6 @@ class CompletionContext:
 RecordRow = dict[str, object]
 _TABLES: Final[tuple[RecordTable, ...]] = ("wave_days", "waves", "lineage")
 _MAX_FILE_BYTES: Final = 512 * 1024 * 1024
-_HEX = frozenset("0123456789abcdef")
 
 
 class WaveRecordStorageError(ValueError):
@@ -2086,7 +2086,7 @@ def _validate_wave_id(value: object, name: str) -> None:
     """Validate one permanent wave ID.
 
     Steps:
-        1. Check the compact date and hash-prefix layout.
+        1. Check the compact date and complete footprint-digest layout.
         2. Reject IDs with invalid length, separator, or characters.
 
     Args:
@@ -2097,16 +2097,10 @@ def _validate_wave_id(value: object, name: str) -> None:
         None when the value has birth-date/hash form.
 
     Examples:
-        _validate_wave_id("19600105-94691d76", "wave_id")
+        _validate_wave_id("19600105-94691d760123456789abcdef01234567", "wave_id")
     """
-    if (
-        not isinstance(value, str)
-        or len(value) != 17
-        or not value[:8].isdigit()
-        or value[8] != "-"
-        or any(letter not in _HEX for letter in value[9:])
-    ):
-        msg = f"{name} must be a YYYYMMDD-first8hash ID"
+    if not isinstance(value, str) or WAVE_ID_PATTERN.fullmatch(value) is None:
+        msg = f"{name} must be a YYYYMMDD-full-digest ID"
         raise WaveRecordStorageError(msg)
 
 
