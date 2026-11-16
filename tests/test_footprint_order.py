@@ -834,3 +834,171 @@ def test_batch_collection_and_scalar_walk_give_identical_union_bytes() -> None:
     assert actual is not None
     assert expected is not None
     assert actual.wkb == expected.wkb
+
+
+def _block_scene() -> tuple[WaveCells, tuple[DailyWaveComponentGeometry, ...]]:
+    """Build a 6-by-4 block of cells mixing all three roles, with one far-away gap cell.
+
+    Args:
+        None.
+
+    Returns:
+        The complete cell table and one finished footprint for the block. The
+        isolated gap-only cell belongs to no finished footprint.
+
+    Examples:
+        cells, roles = _block_scene()
+    """
+    specification = []
+    for column in range(6):
+        for row in range(4):
+            role = "qualified" if column < 3 else "grace" if row < 2 else "gap"
+            specification.append((column * 0.25, row * 0.25, role))
+    specification.append((50.0, 40.0, "gap"))
+    cells = _cells(specification)
+    shapes = {
+        role: [
+            shape
+            for shape, kind, longitude in zip(
+                cells.frame.geometry,
+                _roles_of(cells),
+                cells.frame["longitude"],
+                strict=True,
+            )
+            if kind == role and longitude < 10
+        ]
+        for role in ("qualified", "grace", "gap")
+    }
+    role = _role(
+        shapely.union_all(shapes["qualified"]),
+        shapely.union_all(shapes["grace"]),
+        shapely.union_all(shapes["gap"]),
+    )
+    return cells, (role,)
+
+
+def _roles_of(cells: WaveCells) -> list[str]:
+    """Name each native cell's role for building test footprints.
+
+    Args:
+        cells: Complete native cell table.
+
+    Returns:
+        One of "qualified", "grace" or "gap" for each row, in row order.
+
+    Examples:
+        names = _roles_of(cells)
+    """
+    gap = cells.frame["gap_filled"].to_numpy(dtype=bool)
+    grace = cells.frame["grace_days"].fillna(0).to_numpy(dtype=float).astype(bool)
+    return [
+        "gap" if g else "grace" if r else "qualified"
+        for g, r in zip(gap, grace, strict=True)
+    ]
+
+
+def _dateline_scene() -> tuple[WaveCells, tuple[DailyWaveComponentGeometry, ...]]:
+    """Build a mixed-role shape across the 180 line with a separate gap-only group.
+
+    Args:
+        None.
+
+    Returns:
+        The complete cell table and one finished footprint spanning both map
+        edges. The isolated gap-only cell belongs to no finished footprint.
+
+    Examples:
+        cells, roles = _dateline_scene()
+    """
+    cells = _cells(
+        (
+            (179.75, 10.0, "qualified"),
+            (180.0, 10.0, "qualified"),
+            (-179.75, 10.0, "grace"),
+            (180.0, 10.25, "gap"),
+            (-179.75, 10.25, "gap"),
+            (179.75, 10.25, "grace"),
+            (100.0, -20.0, "gap"),
+        )
+    )
+    kinds = _roles_of(cells)
+    longitudes = cells.frame["longitude"]
+    near = [
+        (shape, kind)
+        for shape, kind, longitude in zip(
+            cells.frame.geometry, kinds, longitudes, strict=True
+        )
+        if longitude != 100.0
+    ]
+    role = _role(
+        *(
+            shapely.union_all([shape for shape, kind in near if kind == name])
+            for name in ("qualified", "grace", "gap")
+        )
+    )
+    return cells, (role,)
+
+
+def test_block_of_many_cells_digest_is_frozen() -> None:
+    """Pin the digest of 24 mixed cells so any change to sorting or joining is caught.
+
+    Args:
+        None.
+
+    Returns:
+        None after the digest equals the value saved from the reviewed code.
+
+    Examples:
+        Run ``pytest tests/test_footprint_order.py -k block_of_many_cells``.
+    """
+    cells, roles = _block_scene()
+    assert FootprintOrder.for_day(DAY, roles, cells) == (
+        "1af1042262f015c1b5ac09cbfd4de5ed",
+    )
+
+
+def test_mixed_dateline_scene_digest_is_frozen() -> None:
+    """Pin the digest of mixed-role cells across the 180 line with a gap-only group.
+
+    Args:
+        None.
+
+    Returns:
+        None after the digest equals the value saved from the reviewed code.
+
+    Examples:
+        Run ``pytest tests/test_footprint_order.py -k mixed_dateline_scene``.
+    """
+    cells, roles = _dateline_scene()
+    assert FootprintOrder.for_day(DAY, roles, cells) == (
+        "8486cc04fb267d319c63118d5ca6bd28",
+    )
+
+
+def test_cell_ordering_bytes_are_written_lowest_digit_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check the tie-break bytes use one fixed byte order on every computer.
+
+    Args:
+        monkeypatch: Pytest tool used to watch how the bytes are written.
+
+    Returns:
+        None after every byte-writing call asks for lowest digit first.
+
+    Examples:
+        Run ``pytest tests/test_footprint_order.py -k lowest_digit_first``.
+    """
+    cells = _cells(((180.0, 0.0, "qualified"),))
+    parts = cells.frame.geometry.tolist()
+    seen: list[int] = []
+    original = shapely.to_wkb
+
+    def record(geometry: object, *args: object, **kwargs: object) -> object:
+        seen.append(int(kwargs.get("byte_order", -1)))  # type: ignore[call-overload]
+        return original(geometry, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(shapely, "to_wkb", record)
+    FootprintOrder.for_day(DAY, (_role(MultiPolygon(parts)),), cells)
+    assert seen
+    assert set(seen) == {1}

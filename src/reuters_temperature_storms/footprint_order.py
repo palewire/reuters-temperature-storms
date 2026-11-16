@@ -852,8 +852,10 @@ class _NativeRoleCells:
         qualified = (~gap) & ~on_grace
         # Sort by longitude, then latitude. At +180, the two displayed halves
         # share a centre, so their fixed rectangle bytes choose their order.
+        # Write every number lowest digit first (byte_order=1) so the bytes,
+        # and therefore the order, are the same on every kind of computer.
         # Repeated identical rectangles would count the same half twice.
-        rectangle_bytes = shapely.to_wkb(shapes)
+        rectangle_bytes = shapely.to_wkb(shapes, byte_order=1)
         order = np.lexsort((rectangle_bytes, latitude, longitude))
         ordered_bytes = rectangle_bytes[order]
         if np.any(ordered_bytes[1:] == ordered_bytes[:-1]):
