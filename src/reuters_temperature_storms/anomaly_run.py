@@ -17,6 +17,7 @@ from .anomalies import (
     DailyAnomalyBuilder,
     DailyClimatology,
     DailyTemperatures,
+    GridRegion,
     MeasurementGrid,
     SeasonalDistribution,
 )
@@ -109,7 +110,9 @@ class AnomalyFileSource(DailyFileSource):
             raise AnomalyError("filename template must select a flat Parquet filename")
         return f"{self._path}/{filename}"
 
-    def read_grid(self, day: date, grid_type: type[Grid]) -> Grid:
+    def read_grid(
+        self, day: date, grid_type: type[Grid], region: GridRegion | None = None
+    ) -> Grid:
         """Select needed columns, expand to float64 and validate the input grid.
 
         Steps:
@@ -117,11 +120,13 @@ class AnomalyFileSource(DailyFileSource):
             2. Read only these columns; expand floating inputs before calculation.
             3. For raw temperatures only, require timezone-free timestamps on the
                requested day and remove their time of day.
-            4. Validate the complete global grid and requested date.
+            4. Validate the complete global grid, or the complete region when one
+               is given, and the requested date.
 
         Args:
             day: Requested calendar date.
             grid_type: Accepted temperature, baseline or anomaly dataclass.
+            region: Optional rectangle that replaces the complete global grid.
 
         Returns:
             Validated float64 input grid.
@@ -149,7 +154,7 @@ class AnomalyFileSource(DailyFileSource):
                 if grid_type is DailyAnomalies and frame[column].dtype != "float64":
                     raise AnomalyError(f"stored anomaly {column} must be float64")
                 frame[column] = frame[column].astype("float64")
-        return grid_type(frame, day)
+        return grid_type(frame, day, region)
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +167,7 @@ class AnomalyResult:
 
     Args:
         day: Finished calendar date.
-        rows: Complete global row count.
+        rows: Complete global or regional row count.
         bytes: Stored file size.
         elapsed_seconds: Worker duration.
         skipped: Whether an existing accepted file was reused.
@@ -190,6 +195,7 @@ class AnomalyTask:
         day: Output date.
         sources: Temperature, ordinary, adjusted and output root settings.
         force_update: Whether to replace existing output.
+        region: Optional rectangle that replaces the complete global grid.
 
     Examples:
         result = task.run()
@@ -198,6 +204,7 @@ class AnomalyTask:
     day: date
     sources: tuple[tuple[str, dict[str, object], str], ...]
     force_update: bool
+    region: GridRegion | None = None
 
     def run(self) -> AnomalyResult:
         """Read, calculate and save one date, or validate its existing output.
@@ -224,11 +231,11 @@ class AnomalyTask:
         path = destination.path_for(self.day)
         skipped = not self.force_update and destination._filesystem.exists(path)
         if skipped:
-            anomalies = destination.read_grid(self.day, DailyAnomalies)
+            anomalies = destination.read_grid(self.day, DailyAnomalies, self.region)
         else:
-            daily = temperature.read_grid(self.day, DailyTemperatures)
-            normal = ordinary.read_grid(self.day, DailyClimatology)
-            seasonal = adjusted.read_grid(self.day, SeasonalDistribution)
+            daily = temperature.read_grid(self.day, DailyTemperatures, self.region)
+            normal = ordinary.read_grid(self.day, DailyClimatology, self.region)
+            seasonal = adjusted.read_grid(self.day, SeasonalDistribution, self.region)
             anomalies = DailyAnomalyBuilder().build(daily, normal, seasonal)
             destination._filesystem.makedirs(destination._path, exist_ok=True)
             with destination._filesystem.open(path, "wb") as stream:
@@ -259,6 +266,7 @@ class AnomalyRun:
         end_date: Last included date.
         max_workers: Process count or available CPUs.
         force_update: Replace existing outputs.
+        region: Optional rectangle that replaces the complete global grid.
 
     Examples:
         results = AnomalyRun(daily, normal, adjusted, output, start, end, 8).run()
@@ -272,6 +280,7 @@ class AnomalyRun:
     end_date: date
     max_workers: int | None = None
     force_update: bool = False
+    region: GridRegion | None = None
 
     def validate(self) -> None:
         """Check ordered dates, worker count and separate writable output roots.
@@ -303,6 +312,8 @@ class AnomalyRun:
             )
         if not isinstance(self.force_update, bool):
             raise AnomalyError("force_update must be boolean")
+        if self.region is not None and not isinstance(self.region, GridRegion):
+            raise AnomalyError("region must be a GridRegion")
         for day in (self.start_date, self.end_date):
             if not isinstance(day, date) or isinstance(day, datetime):
                 raise AnomalyError("run dates must be plain calendar dates")
@@ -372,7 +383,7 @@ class AnomalyRun:
         missing = []
         for day in self.dates():
             if self.destination._filesystem.exists(self.destination.path_for(day)):
-                self.destination.read_grid(day, DailyAnomalies)
+                self.destination.read_grid(day, DailyAnomalies, self.region)
             else:
                 missing.append(day)
         return tuple(missing)
@@ -406,7 +417,10 @@ class AnomalyRun:
                 self.destination,
             )
         )
-        tasks = (AnomalyTask(day, sources, self.force_update) for day in self.dates())
+        tasks = (
+            AnomalyTask(day, sources, self.force_update, self.region)
+            for day in self.dates()
+        )
         workers = min(
             self.max_workers or os.cpu_count() or 1,
             (self.end_date - self.start_date).days + 1,

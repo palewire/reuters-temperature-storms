@@ -5,6 +5,7 @@ from .anomalies import (
     DailyAnomalyBuilder,
     DailyClimatology,
     DailyTemperatures,
+    GridRegion,
     SeasonalDistribution,
 )
 from .anomaly_run import AnomalyFileSource, AnomalyResult, AnomalyRun
@@ -47,6 +48,7 @@ __all__ = [
     "FootprintOrder",
     "FootprintResult",
     "FootprintRun",
+    "GridRegion",
     "Lineage",
     "NameLibrary",
     "NameSequence",
