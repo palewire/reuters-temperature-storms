@@ -857,7 +857,7 @@ def test_input_labels_do_not_change_saved_state_or_resumed_endings() -> None:
 
 @pytest.mark.unit
 def test_checkpoint_rejects_shortened_permanent_identity() -> None:
-    """Reject an old shortened key before it can continue under the shared rule.
+    """Require a complete permanent key when restoring a checkpoint.
 
     Args:
         None.
@@ -870,7 +870,7 @@ def test_checkpoint_rejects_shortened_permanent_identity() -> None:
 
     Steps:
         1. Create valid full-digest tracker state.
-        2. Replace its permanent key with the former eight-character suffix.
+        2. Truncate the permanent key's digest suffix to eight characters.
         3. Require checkpoint restoration to reject the changed state.
     """
     tracker = WaveTracker(
@@ -1027,7 +1027,7 @@ def test_january_archive_seed_names_from_zero_and_resumes_exactly():
 
 @pytest.mark.unit
 def test_delayed_names_keep_birth_order_after_daily_reorder_and_resume() -> None:
-    """Keep original naming order when active footprints qualify on a later day.
+    """Assign names by birth order when footprints qualify on a later day.
 
     Args:
         None.

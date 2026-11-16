@@ -87,7 +87,8 @@ def run_waves(
 
     Rerunning an interrupted request resumes after the last complete tracked
     date. Inputs already tracked must remain unchanged. A standalone date range
-    starts a new history; historical names require tracking from the start.
+    starts a new name sequence; continuing that sequence requires saved state
+    or tracking from the series start.
 
     Steps:
         1. Check the requested dates, series, output folder and stopping option.

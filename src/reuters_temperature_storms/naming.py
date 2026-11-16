@@ -354,7 +354,7 @@ class NameLibrary:
             or geographies != _REQUIRED_GEOGRAPHIES
             or genders != _REQUIRED_GENDERS
         ):
-            msg = "library dimensions do not match the reviewed Reuters values"
+            msg = "library dimensions must use the required group, geography and gender values"
             raise StormNamingError(msg)
         cycle_length = math.lcm(*dimensions)
         bucket_count = math.prod(dimensions)

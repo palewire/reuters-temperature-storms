@@ -135,9 +135,9 @@ def test_readers_distinguish_keys_with_the_same_short_prefix(tmp_path: Path) -> 
         Run pytest tests/test_records.py -k same_short_prefix.
 
     Steps:
-        1. Write two distinct keys sharing the formerly shortened suffix.
+        1. Write two distinct keys whose digest suffixes share eight leading characters.
         2. Select each complete key through the public catalog reader.
-        3. Reject an old shortened key as an invalid selection.
+        3. Reject a truncated key as an invalid selection.
     """
     first, second = _CROSS_YEAR_IDS[:2]
     assert first[:17] == second[:17]

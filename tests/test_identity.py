@@ -16,7 +16,7 @@ from reuters_temperature_storms.identity import (
 
 
 @pytest.mark.unit
-def test_saved_cell_reproduces_the_existing_identity_vector() -> None:
+def test_saved_cell_and_birth_footprint_share_identity() -> None:
     """A saved native address gives the same key as its birth footprint.
 
     Args:
