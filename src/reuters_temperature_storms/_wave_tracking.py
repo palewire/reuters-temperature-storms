@@ -92,6 +92,72 @@ class TrackedWaveComponent:
     parent_wave_ids: tuple[str, ...]
     name: str | None = None
 
+    def validate_birth_cell(self, subject: str) -> None:
+        """Check retained birth facts against the permanent wave identity.
+
+        Args:
+            subject: Plain-language label used when reporting a rejected record.
+
+        Returns:
+            None when the saved address reproduces the permanent key and a birth
+            record still agrees with its complete original footprint.
+
+        Raises:
+            WaveTrackingError: If birth facts are missing, outside the native grid,
+                or inconsistent with the permanent key or birth footprint.
+
+        Examples:
+            ``record.validate_birth_cell("previous")`` checks a resumed wave.
+        """
+        try:
+            identity = CellIdentity(self.start_date, self.birth_cell_id)
+            expected = identity.wave_id
+            if not self.continues and identity.digest != self.component_id:
+                raise IdentityError(
+                    "birth cell must match the complete birth footprint"
+                )
+        except IdentityError as error:
+            raise WaveTrackingError(
+                f"{subject} birth_cell_id is invalid: {error}"
+            ) from error
+        if self.wave_id != expected:
+            raise WaveTrackingError(
+                f"{subject} birth_cell_id and start_date must reproduce wave_id"
+            )
+
+    def validate_birth_order(self, subject: str) -> None:
+        """Check retained naming order without measuring a later footprint.
+
+        A wave can move before earning a name. Its current shape cannot recover
+        its birth ordering, so saved continuations must carry the original digest.
+
+        Args:
+            subject: Plain-language label used in validation errors.
+
+        Returns:
+            None when the digest is complete and a birth record matches today's
+            component ordering digest.
+
+        Raises:
+            WaveTrackingError: If the saved digest is malformed or a birth record
+                carries a different daily and birth ordering digest.
+
+        Examples:
+            ``record.validate_birth_order("previous")`` checks a resumed wave.
+        """
+        if not _is_order_digest(self.birth_order_digest):
+            raise WaveTrackingError(
+                f"{subject} birth_order_digest must be a 32-character lowercase footprint digest"
+            )
+        if (
+            _as_day(self.start_date, "start_date")
+            == _as_day(self.component.geometry.time, "component time")
+            and self.birth_order_digest != self.component.order_digest
+        ):
+            raise WaveTrackingError(
+                f"{subject} birth_order_digest must match the birth component order_digest"
+            )
+
     @property
     def parent_keys(self) -> tuple[str, ...]:
         """Return stored parents, including a surviving merger identity.
@@ -819,8 +885,8 @@ def _validate_previous_record(
     if record.wave_id[:8] != np.datetime_as_string(start_date).replace("-", ""):
         msg = "previous wave key birth-date prefix must match start_date"
         raise WaveTrackingError(msg)
-    _validate_birth_cell(record, "previous")
-    _validate_birth_order(record, "previous")
+    record.validate_birth_cell("previous")
+    record.validate_birth_order("previous")
     peak_date = _as_day(record.peak_date, "peak_date")
     if start_date > previous_day or not start_date <= peak_date <= previous_day:
         msg = "previous wave dates must run from start_date through its component date"
@@ -1408,74 +1474,6 @@ def _is_wave_id(value: str) -> bool:
     return isinstance(value, str) and WAVE_ID_PATTERN.fullmatch(value) is not None
 
 
-def _validate_birth_cell(record: TrackedWaveComponent, subject: str) -> None:
-    """Check retained birth facts against the permanent wave identity.
-
-    Args:
-        record: Active or final record carrying the birth date and cell address.
-        subject: Plain-language label used when reporting a rejected record.
-
-    Returns:
-        None when the saved address reproduces the permanent key and a birth
-        record still agrees with its complete original footprint.
-
-    Raises:
-        WaveTrackingError: If birth facts are missing, outside the native grid,
-            or inconsistent with the permanent key or birth footprint.
-
-    Examples:
-        ``_validate_birth_cell(record, "previous")`` checks a resumed wave.
-    """
-    try:
-        identity = CellIdentity(record.start_date, record.birth_cell_id)
-        expected = identity.wave_id
-        if not record.continues and identity.digest != record.component_id:
-            raise IdentityError("birth cell must match the complete birth footprint")
-    except IdentityError as error:
-        raise WaveTrackingError(
-            f"{subject} birth_cell_id is invalid: {error}"
-        ) from error
-    if record.wave_id != expected:
-        raise WaveTrackingError(
-            f"{subject} birth_cell_id and start_date must reproduce wave_id"
-        )
-
-
-def _validate_birth_order(record: TrackedWaveComponent, subject: str) -> None:
-    """Check retained naming order without measuring a later footprint.
-
-    A wave can move before earning a name. Its current shape cannot recover
-    its birth ordering, so saved continuations must carry the original digest.
-
-    Args:
-        record: Active or final wave record with its saved birth ordering digest.
-        subject: Plain-language label used in validation errors.
-
-    Returns:
-        None when the digest is complete and a birth record matches today's
-        component ordering digest.
-
-    Raises:
-        WaveTrackingError: If the saved digest is malformed or a birth record
-            carries a different daily and birth ordering digest.
-
-    Examples:
-        ``_validate_birth_order(record, "previous")`` checks a resumed wave.
-    """
-    if not _is_order_digest(record.birth_order_digest):
-        raise WaveTrackingError(
-            f"{subject} birth_order_digest must be a 32-character lowercase footprint digest"
-        )
-    if (
-        _as_day(record.start_date, "start_date")
-        == _as_day(record.component.geometry.time, "component time")
-        and record.birth_order_digest != record.component.order_digest
-    ):
-        raise WaveTrackingError(
-            f"{subject} birth_order_digest must match the birth component order_digest"
-        )
-
-
 def _validate_output(
     previous: Sequence[TrackedWaveComponent],
     current: Sequence[TrackedWaveComponent],
@@ -1510,8 +1508,8 @@ def _validate_output(
     previous_ids = set(previous_by_id)
     birth_orders: set[tuple[np.datetime64, str]] = set()
     for record in current:
-        _validate_birth_cell(record, "current")
-        _validate_birth_order(record, "current")
+        record.validate_birth_cell("current")
+        record.validate_birth_order("current")
         birth_order = (
             _as_day(record.start_date, "start_date"),
             record.birth_order_digest,
@@ -1538,8 +1536,8 @@ def _validate_output(
             msg = "current overlap_percent must be between 0 and 100"
             raise WaveTrackingError(msg)
     for record in ended:
-        _validate_birth_cell(record.final_record, "ended")
-        _validate_birth_order(record.final_record, "ended")
+        record.final_record.validate_birth_cell("ended")
+        record.final_record.validate_birth_order("ended")
         predecessor = previous_by_id.get(record.final_record.wave_id)
         if predecessor is None or (
             record.final_record.birth_order_digest != predecessor.birth_order_digest
