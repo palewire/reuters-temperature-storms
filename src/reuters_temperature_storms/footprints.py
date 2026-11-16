@@ -21,7 +21,7 @@ from .components import (
     DailyWaveComponentGeometry,
 )
 from .footprint_geometry import WaveFootprintBuilder
-from .footprint_order import FootprintOrderError, HistoricalFootprintOrder
+from .footprint_order import FootprintOrder, FootprintOrderError
 from .identity import component_identity
 from .schemas import WaveFootprintSchema
 from .series import WaveSeries
@@ -420,17 +420,17 @@ class WaveFootprints:
         """
         prepared = self._prepare_components(day, series)
         try:
-            # The original day-wide grouping affects how equal-size pieces are
+            # Day-wide grouping affects how equal-size pieces are
             # ordered at the date line. Rebuild the complete input date once;
             # a storm's isolated shape does not contain that surrounding context.
-            order_digests = HistoricalFootprintOrder.for_day(
+            order_digests = FootprintOrder.for_day(
                 pd.Timestamp(day).to_datetime64(),
                 tuple(roles for _, _, roles in prepared),
                 native_cells=native_cells,
             )
         except FootprintOrderError as error:
             raise FootprintError(
-                f"cannot compute historical ordering for {day.isoformat()}: {error}"
+                f"cannot compute footprint ordering for {day.isoformat()}: {error}"
             ) from error
         components = [
             ComponentMembership(
@@ -444,9 +444,7 @@ class WaveFootprints:
             )
         ]
         if len({component.order_digest for component in components}) != len(components):
-            raise FootprintError(
-                "footprints must have unique historical ordering digests"
-            )
+            raise FootprintError("footprints must have unique ordering digests")
         return tuple(
             replace(component, geometry=replace(component.geometry, label=label))
             for label, component in enumerate(
@@ -550,7 +548,7 @@ class WaveFootprintSource(DailyFileSource):
             if day in self.known_empty_dates:
                 native_cells = self.cell_source.read_cells(day, series)
                 try:
-                    HistoricalFootprintOrder.for_day(
+                    FootprintOrder.for_day(
                         pd.Timestamp(day).to_datetime64(), (), native_cells=native_cells
                     )
                 except FootprintOrderError as error:

@@ -13,7 +13,7 @@ from .cell_run import CellResult, CellRun
 from .cell_scores import WaveCellScores, WaveCellScoreSource
 from .cell_state import WaveCellState, WaveCellStateSource
 from .cells import WaveCells, WaveCellSource
-from .footprint_order import HistoricalFootprintOrder
+from .footprint_order import FootprintOrder
 from .footprint_run import FootprintResult, FootprintRun
 from .footprints import WaveFootprints, WaveFootprintSource
 from .naming import NameLibrary, NameSequence, load_name_library
@@ -44,9 +44,9 @@ __all__ = [
     "DailyAnomalyBuilder",
     "DailyClimatology",
     "DailyTemperatures",
+    "FootprintOrder",
     "FootprintResult",
     "FootprintRun",
-    "HistoricalFootprintOrder",
     "Lineage",
     "NameLibrary",
     "NameSequence",

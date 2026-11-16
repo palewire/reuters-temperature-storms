@@ -51,7 +51,7 @@ def is_order_digest(value: object) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class HistoricalFootprintOrder:
+class FootprintOrder:
     """Calculate one whole day's footprint ordering codes from its grid cells.
 
     A footprint is the ground covered by one connected group of grid cells.
@@ -72,7 +72,7 @@ class HistoricalFootprintOrder:
             including both dateline halves and any gap-only groups.
 
     Examples:
-        order = HistoricalFootprintOrder(day, tuple(roles), cells)
+        order = FootprintOrder(day, tuple(roles), cells)
         assert len(order.digests) == len(roles)
     """
 
@@ -92,16 +92,16 @@ class HistoricalFootprintOrder:
 
         Raises:
             FootprintOrderError: If the runtime, date, cells or finished role
-                coverage cannot reproduce the complete daily calculation.
+                coverage cannot supply a complete daily ordering.
 
         Examples:
-            order = HistoricalFootprintOrder(day, tuple(roles), cells)
+            order = FootprintOrder(day, tuple(roles), cells)
         """
         # Joining shapes can list their corners differently across software
         # releases. Require the supported version because that written order
         # affects the code we calculate below, even for equal covered ground.
         if shapely.geos_version != (3, 13, 1):
-            raise FootprintOrderError("historical naming order requires GEOS 3.13.1")
+            raise FootprintOrderError("footprint ordering requires GEOS 3.13.1")
 
         # One calculation represents one whole calendar day. Reject missing
         # dates and times within a day so the date text has only one meaning.
@@ -220,7 +220,7 @@ class HistoricalFootprintOrder:
                 or the supported geometry runtime is unavailable.
 
         Examples:
-            digests = HistoricalFootprintOrder.for_day(day, roles, cells)
+            digests = FootprintOrder.for_day(day, roles, cells)
         """
         # Accept any sequence of footprints, but keep its order in a tuple.
         # Construction performs all checks and calculation before returning.
@@ -261,7 +261,7 @@ class HistoricalFootprintOrder:
             FootprintOrderError: If coverage is missing, broken or outside the grid.
 
         Examples:
-            HistoricalFootprintOrder._check_geometry("full", full, required=True)
+            FootprintOrder._check_geometry("full", full, required=True)
         """
         # Qualified or grace coverage can be absent. Full coverage cannot:
         # there would be no footprint to match or write into an ordering code.
@@ -311,7 +311,7 @@ class HistoricalFootprintOrder:
             FootprintOrderError: If a role contains partial cells or different coverage.
 
         Examples:
-            HistoricalFootprintOrder._require_same_coverage("grace", old, rebuilt)
+            FootprintOrder._require_same_coverage("grace", old, rebuilt)
         """
         # Treat None and an empty shape as the same absence of coverage.
         # Otherwise compare covered ground, allowing a different corner-list
@@ -327,7 +327,7 @@ class HistoricalFootprintOrder:
 
 
 @dataclass(slots=True)
-class _HistoricalComparisonSort:
+class _ComparisonSort:
     """Sort integer positions with explicit comparison and equal-value rules.
 
     Args:
@@ -335,7 +335,7 @@ class _HistoricalComparisonSort:
         values: Numeric comparison values, such as each polygon's X centre.
 
     Examples:
-        sorter = _HistoricalComparisonSort([0, 1, 2], [3.0, 1.0, 2.0])
+        sorter = _ComparisonSort([0, 1, 2], [3.0, 1.0, 2.0])
         sorter.sort()
         assert sorter.order == [1, 2, 0]
     """
@@ -354,7 +354,7 @@ class _HistoricalComparisonSort:
             None. Updates order in place.
 
         Examples:
-            _HistoricalComparisonSort([0, 1], [2.0, 1.0]).sort(0, 2)
+            _ComparisonSort([0, 1], [2.0, 1.0]).sort(0, 2)
         """
         # Work only inside the requested part of the list. Zero or one item
         # already has an order and needs no comparisons.
@@ -595,7 +595,7 @@ class _HistoricalComparisonSort:
             self._adjust_heap(start, 0, length, item)
 
 
-class _HistoricalPolygonUnion:
+class _PolygonUnion:
     """Combine covered ground using a fixed shape order and joining sequence.
 
     Equal ground can have different written corner orders. Sort the supplied
@@ -606,7 +606,7 @@ class _HistoricalPolygonUnion:
         None. Each join keeps its own polygon list and sorting positions.
 
     Examples:
-        combined = _HistoricalPolygonUnion.join([west, east])
+        combined = _PolygonUnion.join([west, east])
     """
 
     @classmethod
@@ -621,7 +621,7 @@ class _HistoricalPolygonUnion:
             All ground covered by the pieces, or None when no area is present.
 
         Examples:
-            qualified = _HistoricalPolygonUnion.join(qualified_cells)
+            qualified = _PolygonUnion.join(qualified_cells)
         """
         # Remove missing, empty and non-area pieces first. Keep the supplied
         # order of all remaining pieces until the explicit sorting step below.
@@ -641,8 +641,8 @@ class _HistoricalPolygonUnion:
             # share centre coordinates, so use the explicit equal-value rules.
             strips = ceil(sqrt(ceil(len(polygons) / 10)))
             per_strip = ceil(len(polygons) / strips)
-            _HistoricalComparisonSort(order, horizontal).sort()
-            sorter = _HistoricalComparisonSort(order, vertical)
+            _ComparisonSort(order, horizontal).sort()
+            sorter = _ComparisonSort(order, vertical)
             for start in range(0, len(polygons), per_strip):
                 sorter.sort(start, min(start + per_strip, len(polygons)))
         # Join the ordered pieces by repeatedly dividing the list in half.
@@ -663,7 +663,7 @@ class _HistoricalPolygonUnion:
             Nonpolygon pieces add no coverage and are omitted.
 
         Examples:
-            polygons = _HistoricalPolygonUnion._collect_parts([west, None, east])
+            polygons = _PolygonUnion._collect_parts([west, None, east])
         """
         # Accept lists and other collections through one array. Keep existing
         # shape objects so collecting pieces does not rewrite their coordinates.
@@ -718,7 +718,7 @@ class _HistoricalPolygonUnion:
             Combined covered ground using the specified piece order.
 
         Examples:
-            shape = _HistoricalPolygonUnion._combine(polygons, order, 0, len(order))
+            shape = _PolygonUnion._combine(polygons, order, 0, len(order))
         """
         # A single piece needs no join. For two pieces, keep left before right.
         if end - start == 1:
@@ -748,7 +748,7 @@ class _HistoricalPolygonUnion:
             no coverage and are omitted.
 
         Examples:
-            pieces = _HistoricalPolygonUnion.parts(clipped)
+            pieces = _PolygonUnion.parts(clipped)
         """
         # Missing area contributes nothing; one polygon is already a piece.
         if geometry.is_empty:
@@ -880,10 +880,10 @@ class _NativeRoleCells:
         """
         # Join all cells, including gap fill, to find the connected groups.
         # Keeping every cell here matters even for groups removed later.
-        extent = _HistoricalPolygonUnion.join(self.shapes)
+        extent = _PolygonUnion.join(self.shapes)
         if extent is None:
             raise FootprintOrderError("native cells must provide present coverage")
-        parts = _HistoricalPolygonUnion.parts(extent)
+        parts = _PolygonUnion.parts(extent)
         bounds = shapely.bounds(self.shapes)
         # Match each square to a group using a point at its centre. Centres
         # are inside their squares, so shared edges do not make the match unclear.
@@ -910,11 +910,9 @@ class _NativeRoleCells:
             selected = groups == group
             result.append(
                 _RoleShapes(
-                    _HistoricalPolygonUnion.join(
-                        self.shapes[selected & self.qualified]
-                    ),
-                    _HistoricalPolygonUnion.join(self.shapes[selected & self.grace]),
-                    _HistoricalPolygonUnion.join(self.shapes[selected & gap]),
+                    _PolygonUnion.join(self.shapes[selected & self.qualified]),
+                    _PolygonUnion.join(self.shapes[selected & self.grace]),
+                    _PolygonUnion.join(self.shapes[selected & gap]),
                 )
             )
         return result
@@ -1128,7 +1126,7 @@ class _RoleShapes:
         ]
         # Return the joined shape to the normal map range. A coverage kind
         # absent from every member remains absent rather than gaining a shape.
-        combined = _HistoricalPolygonUnion.join(unfolded)
+        combined = _PolygonUnion.join(unfolded)
         return None if combined is None else cls._wrap(combined)
 
     @staticmethod
@@ -1161,9 +1159,9 @@ class _RoleShapes:
             )
             polygons.extend(
                 translate(part, xoff=-360 * strip)
-                for part in _HistoricalPolygonUnion.parts(clipped)
+                for part in _PolygonUnion.parts(clipped)
             )
         # Combine the folded pieces. If clipping produced no area pieces,
         # leave the supplied shape intact rather than inventing coverage.
-        result = _HistoricalPolygonUnion.join(polygons)
+        result = _PolygonUnion.join(polygons)
         return geometry if result is None else result

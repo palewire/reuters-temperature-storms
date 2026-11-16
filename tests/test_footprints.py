@@ -689,7 +689,7 @@ def test_row_groups_preserve_scalars_and_sorted_components(tmp_path):
 
     Returns:
         None. The reader retains WKB, input labels and float values while
-        assigning component numbers in historical footprint-digest order.
+        assigning component numbers in footprint-digest order.
 
     Examples:
         pytest tests/test_footprints.py -k chunked_rows
@@ -736,7 +736,7 @@ def test_row_groups_preserve_scalars_and_sorted_components(tmp_path):
             assert getattr(geometry, name) == table[name][index].as_py()
 
 
-def test_arbitrary_polygon_is_rejected_when_computing_historical_order(tmp_path):
+def test_arbitrary_polygon_is_rejected_when_computing_footprint_order(tmp_path):
     """Keep shape reading available while requiring native coverage for ordering.
 
     Args:
@@ -751,7 +751,7 @@ def test_arbitrary_polygon_is_rejected_when_computing_historical_order(tmp_path)
     path = _write(tmp_path, _table(box(0, 0, 1, 1)))
     footprints = WaveFootprints.read_parquet(path)
     saved_shape = footprints.frame.buffer_geometry.iloc[0].wkb
-    with pytest.raises(FootprintError, match="cannot compute historical ordering"):
+    with pytest.raises(FootprintError, match="cannot compute footprint ordering"):
         footprints.to_components(DAY, SERIES, native_cells=_cells())
     assert footprints.frame.buffer_geometry.iloc[0].wkb == saved_shape
 

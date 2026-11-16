@@ -1,4 +1,4 @@
-"""Check historical name order from complete cells without relying on input bytes."""
+"""Check footprint ordering from complete cells without relying on input bytes."""
 
 from __future__ import annotations
 
@@ -23,11 +23,11 @@ from shapely.geometry import (
 from reuters_temperature_storms.cells import WaveCells
 from reuters_temperature_storms.components import DailyWaveComponentGeometry
 from reuters_temperature_storms.footprint_order import (
+    FootprintOrder,
     FootprintOrderError,
-    HistoricalFootprintOrder,
-    _HistoricalComparisonSort,
-    _HistoricalPolygonUnion,
+    _ComparisonSort,
     _NativeRoleCells,
+    _PolygonUnion,
 )
 
 if TYPE_CHECKING:
@@ -110,7 +110,7 @@ def _role(
         grace: Complete grace native coverage, or None when absent.
         gap: Complete gap-fill coverage, or None when absent.
         day: Represented calendar day.
-        label: Input label, which must have no effect on historical ordering.
+        label: Input label, which must have no effect on footprint ordering.
 
     Returns:
         One role row whose full shape is the supplied coverage union. Scalar
@@ -151,21 +151,21 @@ def _turn_ring(shape: Polygon) -> Polygon:
     return Polygon(list(reversed(shifted)))
 
 
-def test_literal_single_cell_historical_digest() -> None:
-    """Reproduce the original date-and-shape text vector for one native cell.
+def test_literal_single_cell_digest() -> None:
+    """Check the date-and-shape digest for one native cell.
 
     Args:
         None.
 
     Returns:
-        None after the complete digest agrees with the fixed historical value.
+        None after the complete digest agrees with the expected value.
 
     Examples:
         Run ``pytest tests/test_footprint_order.py -k literal_single_cell``.
     """
     cells = _cells(((0.0, 0.0, "qualified"),))
     role = _role(box(-0.125, -0.125, 0.125, 0.125))
-    assert HistoricalFootprintOrder.for_day(DAY, (role,), cells) == (
+    assert FootprintOrder.for_day(DAY, (role,), cells) == (
         "e974c8427e300f1c02f671230093f7b9",
     )
 
@@ -185,7 +185,7 @@ def test_polygon_encoding_labels_and_measurements_do_not_change_order() -> None:
     """
     cells = _cells(((0.0, 0.0, "qualified"), (0.25, 0.0, "grace")))
     role = _role(cells.frame.geometry.iloc[0], cells.frame.geometry.iloc[1])
-    expected = HistoricalFootprintOrder.for_day(DAY, (role,), cells)
+    expected = FootprintOrder.for_day(DAY, (role,), cells)
     frame = cells.frame.iloc[::-1].reset_index(drop=True).copy()
     frame.geometry = [_turn_ring(shape) for shape in frame.geometry]
     changed_cells = WaveCells(frame)
@@ -207,7 +207,7 @@ def test_polygon_encoding_labels_and_measurements_do_not_change_order() -> None:
             changed.full_geometry,
         )
     )
-    assert HistoricalFootprintOrder.for_day(DAY, (changed,), changed_cells) == expected
+    assert FootprintOrder.for_day(DAY, (changed,), changed_cells) == expected
     assert tuple(frame.geometry.to_wkb()) == cell_bytes
     assert (
         tuple(
@@ -241,12 +241,9 @@ def test_results_follow_supplied_role_order() -> None:
         _role(shape, label=index + 5)
         for index, shape in enumerate(cells.frame.geometry)
     )
-    expected = HistoricalFootprintOrder.for_day(DAY, roles, cells)
+    expected = FootprintOrder.for_day(DAY, roles, cells)
     shuffled_cells = WaveCells(cells.frame.iloc[::-1].reset_index(drop=True))
-    assert (
-        HistoricalFootprintOrder.for_day(DAY, roles[::-1], shuffled_cells)
-        == expected[::-1]
-    )
+    assert FootprintOrder.for_day(DAY, roles[::-1], shuffled_cells) == expected[::-1]
     assert expected[0] != expected[1]
 
 
@@ -266,13 +263,10 @@ def test_dateline_halves_have_one_unchanged_order_digest(latitude: float) -> Non
     cells = _cells(((180.0, latitude, "qualified"),))
     parts = cells.frame.geometry.tolist()
     role = _role(MultiPolygon(parts))
-    expected = HistoricalFootprintOrder.for_day(DAY, (role,), cells)
+    expected = FootprintOrder.for_day(DAY, (role,), cells)
     changed_role = _role(MultiPolygon([_turn_ring(part) for part in reversed(parts)]))
     changed_cells = WaveCells(cells.frame.iloc[::-1].reset_index(drop=True))
-    assert (
-        HistoricalFootprintOrder.for_day(DAY, (changed_role,), changed_cells)
-        == expected
-    )
+    assert FootprintOrder.for_day(DAY, (changed_role,), changed_cells) == expected
     assert len(expected[0]) == 32
 
 
@@ -290,9 +284,7 @@ def test_missing_dateline_half_in_finished_coverage_is_rejected() -> None:
     """
     cells = _cells(((180.0, 0.0, "qualified"),))
     with pytest.raises(FootprintOrderError, match="match one native-cell component"):
-        HistoricalFootprintOrder.for_day(
-            DAY, (_role(cells.frame.geometry.iloc[0]),), cells
-        )
+        FootprintOrder.for_day(DAY, (_role(cells.frame.geometry.iloc[0]),), cells)
 
 
 def test_partial_qualified_role_is_rejected() -> None:
@@ -313,7 +305,7 @@ def test_partial_qualified_role_is_rejected() -> None:
     with pytest.raises(
         FootprintOrderError, match="qualified must contain complete native cells"
     ):
-        HistoricalFootprintOrder.for_day(DAY, (partial,), cells)
+        FootprintOrder.for_day(DAY, (partial,), cells)
 
 
 def test_missing_finished_footprint_is_rejected() -> None:
@@ -330,9 +322,7 @@ def test_missing_finished_footprint_is_rejected() -> None:
     """
     cells = _cells(((0.0, 0.0, "qualified"), (5.0, 0.0, "qualified")))
     with pytest.raises(FootprintOrderError, match="every finished real-cell footprint"):
-        HistoricalFootprintOrder.for_day(
-            DAY, (_role(cells.frame.geometry.iloc[0]),), cells
-        )
+        FootprintOrder.for_day(DAY, (_role(cells.frame.geometry.iloc[0]),), cells)
 
 
 def test_repeated_finished_footprint_is_rejected() -> None:
@@ -350,12 +340,12 @@ def test_repeated_finished_footprint_is_rejected() -> None:
     cells = _cells(((0.0, 0.0, "qualified"), (5.0, 0.0, "qualified")))
     role = _role(cells.frame.geometry.iloc[0])
     with pytest.raises(FootprintOrderError, match="match one native-cell component"):
-        HistoricalFootprintOrder.for_day(DAY, (role, role), cells)
+        FootprintOrder.for_day(DAY, (role, role), cells)
 
 
 @pytest.mark.parametrize("day", [None, "2024-01-01", np.datetime64("NaT", "D")])
 def test_invalid_order_date_is_rejected(day: object) -> None:
-    """Require a present NumPy day before computing historical allocation order.
+    """Require a present NumPy day before computing footprint order.
 
     Args:
         day: Missing, text or absent NumPy date candidate.
@@ -367,11 +357,11 @@ def test_invalid_order_date_is_rejected(day: object) -> None:
         Run ``pytest tests/test_footprint_order.py -k invalid_order_date``.
     """
     with pytest.raises(FootprintOrderError, match="present NumPy calendar day"):
-        HistoricalFootprintOrder.for_day(day, (), _cells())
+        FootprintOrder.for_day(day, (), _cells())
 
 
 def test_non_midnight_date_is_rejected() -> None:
-    """Keep historical digest dates independent of an unintended time-of-day value.
+    """Require digest dates to represent midnight.
 
     Args:
         None.
@@ -383,9 +373,7 @@ def test_non_midnight_date_is_rejected() -> None:
         Run ``pytest tests/test_footprint_order.py -k non_midnight_date``.
     """
     with pytest.raises(FootprintOrderError, match="midnight"):
-        HistoricalFootprintOrder.for_day(
-            np.datetime64("2024-01-01T12:00"), (), _cells()
-        )
+        FootprintOrder.for_day(np.datetime64("2024-01-01T12:00"), (), _cells())
 
 
 def test_native_cell_dates_must_match() -> None:
@@ -402,9 +390,7 @@ def test_native_cell_dates_must_match() -> None:
     """
     cells = _cells(((0.0, 0.0, "qualified"),), day=np.datetime64("2024-01-02"))
     with pytest.raises(FootprintOrderError, match="all native cell dates"):
-        HistoricalFootprintOrder.for_day(
-            DAY, (_role(cells.frame.geometry.iloc[0]),), cells
-        )
+        FootprintOrder.for_day(DAY, (_role(cells.frame.geometry.iloc[0]),), cells)
 
 
 def test_finished_role_dates_must_match() -> None:
@@ -422,7 +408,7 @@ def test_finished_role_dates_must_match() -> None:
     cells = _cells(((0.0, 0.0, "qualified"),))
     wrong = _role(cells.frame.geometry.iloc[0], day=np.datetime64("2024-01-02"))
     with pytest.raises(FootprintOrderError, match="all finished footprint dates"):
-        HistoricalFootprintOrder.for_day(DAY, (wrong,), cells)
+        FootprintOrder.for_day(DAY, (wrong,), cells)
 
 
 def test_complete_validated_native_cells_are_mandatory() -> None:
@@ -439,7 +425,7 @@ def test_complete_validated_native_cells_are_mandatory() -> None:
     """
     for absent in (None, _cells().frame):
         with pytest.raises(FootprintOrderError, match="validated complete WaveCells"):
-            HistoricalFootprintOrder.for_day(DAY, (), absent)
+            FootprintOrder.for_day(DAY, (), absent)
 
 
 def test_empty_and_gap_only_days_have_no_finished_digests() -> None:
@@ -454,8 +440,8 @@ def test_empty_and_gap_only_days_have_no_finished_digests() -> None:
     Examples:
         Run ``pytest tests/test_footprint_order.py -k empty_and_gap_only_days``.
     """
-    assert HistoricalFootprintOrder.for_day(DAY, (), _cells()) == ()
-    assert HistoricalFootprintOrder.for_day(DAY, (), _cells(((0.0, 0.0, "gap"),))) == ()
+    assert FootprintOrder.for_day(DAY, (), _cells()) == ()
+    assert FootprintOrder.for_day(DAY, (), _cells(((0.0, 0.0, "gap"),))) == ()
 
 
 def test_unsupported_overlay_runtime_is_rejected(
@@ -474,7 +460,7 @@ def test_unsupported_overlay_runtime_is_rejected(
     """
     monkeypatch.setattr(shapely, "geos_version", (3, 14, 0))
     with pytest.raises(FootprintOrderError, match=r"requires GEOS 3\.13\.1"):
-        HistoricalFootprintOrder.for_day(DAY, (), _cells())
+        FootprintOrder.for_day(DAY, (), _cells())
 
 
 def test_reading_digest_tuple_does_not_repeat_cell_processing(
@@ -492,7 +478,7 @@ def test_reading_digest_tuple_does_not_repeat_cell_processing(
         Run ``pytest tests/test_footprint_order.py -k reading_digest_tuple``.
     """
     cells = _cells(((0.0, 0.0, "qualified"),))
-    order = HistoricalFootprintOrder(DAY, (_role(cells.frame.geometry.iloc[0]),), cells)
+    order = FootprintOrder(DAY, (_role(cells.frame.geometry.iloc[0]),), cells)
     expected = order.digests
 
     def unexpected_rebuild(*_args: object, **_kwargs: object) -> None:
@@ -577,25 +563,25 @@ def test_reading_digest_tuple_does_not_repeat_cell_processing(
         ),
     ],
 )
-def test_fixed_gnu_equal_value_order(
+def test_fixed_equal_value_order(
     values: list[float], start: int, end: int, heap: bool, expected: list[int]
 ) -> None:
-    """Retain the original GNU equal-value moves verified by an independent control.
+    """Check equal-value ordering for whole, selected and heap-sorted ranges.
 
     Args:
         values: Values attached to labelled positions in the input list.
         start: First included position in the selected range.
         end: First excluded position in the selected range.
         heap: Whether to directly exercise the sorting depth safeguard.
-        expected: Literal position sequence from the original GNU control.
+        expected: Expected position sequence, including equal-value ties.
 
     Returns:
         None after whole, selected and safeguarded ranges retain the exact ties.
 
     Examples:
-        Run ``pytest tests/test_footprint_order.py -k fixed_gnu_equal_value_order``.
+        Run ``pytest tests/test_footprint_order.py -k fixed_equal_value_order``.
     """
-    sorter = _HistoricalComparisonSort(list(range(len(values))), values)
+    sorter = _ComparisonSort(list(range(len(values))), values)
     if heap:
         sorter._heap_sort(start, end)
     else:
@@ -619,7 +605,7 @@ def test_changed_native_polygon_is_rejected_after_validation() -> None:
     role = _role(cells.frame.geometry.iloc[0])
     cells.frame.loc[0, "geometry"] = box(-0.125, -0.125, 0.0, 0.125)
     with pytest.raises(FootprintOrderError, match="complete native rectangle"):
-        HistoricalFootprintOrder.for_day(DAY, (role,), cells)
+        FootprintOrder.for_day(DAY, (role,), cells)
 
 
 def test_repeated_native_cell_is_rejected_after_validation() -> None:
@@ -629,7 +615,7 @@ def test_repeated_native_cell_is_rejected_after_validation() -> None:
         None.
 
     Returns:
-        None after duplicating a cell prevents historical order calculation.
+        None after duplicating a cell prevents footprint order calculation.
 
     Examples:
         Run ``pytest tests/test_footprint_order.py -k repeated_native_cell``.
@@ -639,7 +625,7 @@ def test_repeated_native_cell_is_rejected_after_validation() -> None:
     cells.frame.loc[1, "longitude"] = 0.0
     cells.frame.loc[1, "geometry"] = cells.frame.geometry.iloc[0]
     with pytest.raises(FootprintOrderError, match="must not repeat a native cell half"):
-        HistoricalFootprintOrder.for_day(DAY, roles, cells)
+        FootprintOrder.for_day(DAY, roles, cells)
 
 
 def test_native_polygon_collection_keeps_same_operands(
@@ -679,8 +665,8 @@ def test_native_polygon_collection_keeps_same_operands(
         """
         raise AssertionError("Native polygons must be collected together.")
 
-    monkeypatch.setattr(_HistoricalPolygonUnion, "parts", unexpected_walk)
-    collected = _HistoricalPolygonUnion._collect_parts(values)
+    monkeypatch.setattr(_PolygonUnion, "parts", unexpected_walk)
+    collected = _PolygonUnion._collect_parts(values)
     expected = (first, second, third)
     assert tuple(shape.wkb for shape in collected) == tuple(
         shape.wkb for shape in expected
@@ -723,13 +709,10 @@ def test_flat_mixed_collection_preserves_stored_polygon_bytes() -> None:
     ]
     expected = tuple(shape.wkb for shape in polygons)
     assert (
-        tuple(shape.wkb for shape in _HistoricalPolygonUnion._collect_parts(values))
-        == expected
+        tuple(shape.wkb for shape in _PolygonUnion._collect_parts(values)) == expected
     )
     assert (
-        tuple(
-            shape.wkb for shape in _HistoricalPolygonUnion._collect_parts(iter(values))
-        )
+        tuple(shape.wkb for shape in _PolygonUnion._collect_parts(iter(values)))
         == expected
     )
 
@@ -769,9 +752,9 @@ def test_nested_collection_preserves_original_depth_first_polygon_order() -> Non
         None,
         polygons[5],
     )
-    assert tuple(
-        shape.wkb for shape in _HistoricalPolygonUnion._collect_parts(values)
-    ) == tuple(shape.wkb for shape in polygons)
+    assert tuple(shape.wkb for shape in _PolygonUnion._collect_parts(values)) == tuple(
+        shape.wkb for shape in polygons
+    )
 
 
 @pytest.mark.parametrize(
@@ -800,19 +783,19 @@ def test_polygon_collection_without_present_coverage_returns_none(
     Examples:
         Run ``pytest tests/test_footprint_order.py -k without_present_coverage``.
     """
-    assert _HistoricalPolygonUnion._collect_parts(values) == []
-    assert _HistoricalPolygonUnion.join(values) is None
+    assert _PolygonUnion._collect_parts(values) == []
+    assert _PolygonUnion.join(values) is None
 
 
 def test_batch_collection_and_scalar_walk_give_identical_union_bytes() -> None:
-    """Keep the original scalar collection's exact final polygon encoding.
+    """Check batch and scalar polygon collection produce identical union bytes.
 
     Args:
         None.
 
     Returns:
         None after mixed and nested inputs give the same operands and union
-        bytes as the unchanged original recursive collection method.
+        bytes as a depth-first scalar walk.
 
     Examples:
         Run ``pytest tests/test_footprint_order.py -k identical_union_bytes``.
@@ -840,14 +823,14 @@ def test_batch_collection_and_scalar_walk_give_identical_union_bytes() -> None:
         part
         for shape in values
         if shape is not None
-        for part in _HistoricalPolygonUnion.parts(shape)
+        for part in _PolygonUnion.parts(shape)
     ]
-    collected = _HistoricalPolygonUnion._collect_parts(values)
+    collected = _PolygonUnion._collect_parts(values)
     assert tuple(shape.wkb for shape in collected) == tuple(
         shape.wkb for shape in original_parts
     )
-    expected = _HistoricalPolygonUnion.join(original_parts)
-    actual = _HistoricalPolygonUnion.join(values)
+    expected = _PolygonUnion.join(original_parts)
+    actual = _PolygonUnion.join(values)
     assert actual is not None
     assert expected is not None
     assert actual.wkb == expected.wkb

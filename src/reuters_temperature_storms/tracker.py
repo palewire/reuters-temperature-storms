@@ -637,9 +637,6 @@ class WaveTracker:
                     name is None
                     and record.peak_qualified_area >= NAME_AREA_THRESHOLD_KM2
                 ):
-                    # Historical keys used the first eight digest characters.
-                    # The complete digest keeps every distinct-prefix order and
-                    # supplies a fixed suffix order for a future prefix tie.
                     name = (
                         f"{self._name_sequence.name_at_ordinal(ordinal)} "
                         f"{str(record.start_date)[:4]}"
